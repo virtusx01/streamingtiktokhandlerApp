@@ -1,12 +1,7 @@
 import { NextResponse } from 'next/server';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
 import { getSetting } from '@/lib/db';
 import { listenerStatus } from '@/lib/listener-state';
-import { getPythonCommand } from '@/lib/python-runner';
-
-const execAsync = promisify(exec);
+import { WebcastPushConnection } from 'tiktok-live-connector';
 
 export async function GET(req: Request) {
   try {
@@ -27,7 +22,7 @@ export async function GET(req: Request) {
     }
     if (!username) username = listenerStatus.username || 'onlyvirtus';
 
-    // If Python listener is connected to this user right now, it's definitely LIVE
+    // If listener is connected to this user right now, it's definitely LIVE
     const isListenerMatching = listenerStatus.username.toLowerCase() === username.toLowerCase();
     if (listenerStatus.running && listenerStatus.connected && isListenerMatching) {
       return NextResponse.json({
@@ -39,32 +34,27 @@ export async function GET(req: Request) {
       });
     }
 
-    const pythonCmd = getPythonCommand();
-    if (!pythonCmd) {
+    // Check live status directly using tiktok-live-connector (Pure Node.js, zero Python)
+    try {
+      const conn = new WebcastPushConnection(username);
+      const isLive = await conn.fetchIsLive();
+
+      return NextResponse.json({
+        is_live: Boolean(isLive),
+        connected: isListenerMatching && Boolean(listenerStatus.connected),
+        username,
+        statusText: isLive
+          ? `Live sedang berlangsung`
+          : (isListenerMatching && listenerStatus.statusText ? listenerStatus.statusText : 'Offline')
+      });
+    } catch {
       return NextResponse.json({
         is_live: Boolean(listenerStatus.isLive),
-        connected: Boolean(listenerStatus.connected),
+        connected: isListenerMatching && Boolean(listenerStatus.connected),
         username,
-        statusText: isListenerMatching && listenerStatus.statusText ? listenerStatus.statusText : 'Offline',
-        note: 'Serverless runtime tanpa Python'
+        statusText: isListenerMatching && listenerStatus.statusText ? listenerStatus.statusText : 'Offline'
       });
     }
-
-    const scriptPath = path.join(process.cwd(), 'check_live.py');
-    const { stdout } = await execAsync(`"${pythonCmd}" "${scriptPath}" "${username}"`, {
-      timeout: 8000,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    });
-
-    const result = JSON.parse(stdout.trim());
-    const isLive = Boolean(result?.is_live);
-
-    return NextResponse.json({
-      is_live: isLive,
-      connected: isListenerMatching && Boolean(listenerStatus.connected),
-      username,
-      statusText: isLive ? `Live sedang berlangsung` : (isListenerMatching ? listenerStatus.statusText : 'Offline')
-    });
   } catch (err: any) {
     return NextResponse.json({
       is_live: Boolean(listenerStatus.isLive),
