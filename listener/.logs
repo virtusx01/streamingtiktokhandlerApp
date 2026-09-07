@@ -1,0 +1,10 @@
+Starting TikTok Live Listener for @onlyvirtus...
+[Driver] Starting Monkey server on device port 1080...
+[Driver] Connection failed: timed out
+[Driver] WARNING: Monkey server failed to start. Falling back to slow ADB.
+Fatal error: TikTokLive v6.6.5 -> The requested TikTok LIVE user '@onlyvirtus' is offline.
+Cancelling an overlapped future failed
+future: <_OverlappedFuture pending cb=[_ProactorReadPipeTransport._loop_reading()]>
+Traceback (most recent call last):
+  File "C:\Python313\Lib\asyncio\windows_events.py", line 72, in _cancel_overlapped
+OSError: [WinError 6] The handle is invalid

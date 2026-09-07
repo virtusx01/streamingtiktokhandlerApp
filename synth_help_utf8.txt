@@ -1,0 +1,14 @@
+﻿Help on function synthesize in module piper.voice:
+
+synthesize(
+    self,
+    text: str,
+    syn_config: Optional[piper.config.SynthesisConfig] = None,
+    include_alignments: bool = False
+) -> Iterable[piper.voice.AudioChunk]
+    Synthesize one audio chunk per sentence from from text.
+
+    :param text: Text to synthesize.
+    :param syn_config: Synthesis configuration.
+    :param include_alignments: If True and the model supports it, include phoneme/audio alignments.
+

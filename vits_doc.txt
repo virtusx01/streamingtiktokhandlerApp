@@ -1,0 +1,49 @@
+Help on class OfflineTtsVitsModelConfig in module sherpa_onnx.lib._sherpa_onnx:
+
+class OfflineTtsVitsModelConfig(pybind11_builtins.pybind11_object)
+ |  Method resolution order:
+ |      OfflineTtsVitsModelConfig
+ |      pybind11_builtins.pybind11_object
+ |      builtins.object
+ |
+ |  Methods defined here:
+ |
+ |  __init__(...)
+ |      __init__(*args, **kwargs)
+ |      Overloaded function.
+ |
+ |      1. __init__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig) -> None
+ |
+ |      2. __init__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig, model: str, lexicon: str = '', tokens: str, data_dir: str = '', dict_dir: str = '', noise_scale: typing.SupportsFloat = 0.667, noise_scale_w: typing.SupportsFloat = 0.8, length_scale: typing.SupportsFloat = 1.0) -> None
+ |
+ |  __str__(...)
+ |      __str__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig) -> str
+ |
+ |  validate(...)
+ |      validate(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig) -> bool
+ |
+ |  ----------------------------------------------------------------------
+ |  Data descriptors defined here:
+ |
+ |  data_dir
+ |
+ |  dict_dir
+ |
+ |  length_scale
+ |
+ |  lexicon
+ |
+ |  model
+ |
+ |  noise_scale
+ |
+ |  noise_scale_w
+ |
+ |  tokens
+ |
+ |  ----------------------------------------------------------------------
+ |  Static methods inherited from pybind11_builtins.pybind11_object:
+ |
+ |  __new__(*args, **kwargs) class method of pybind11_builtins.pybind11_object
+ |      Create and return a new object.  See help(type) for accurate signature.
+

@@ -1,0 +1,15 @@
+{
+    admin 127.0.0.1:2019
+}
+
+http://localhost.aa {
+    reverse_proxy localhost:3005
+}
+
+http://localhost.bb {
+    reverse_proxy localhost:3000
+}
+
+http://localhost.cc {
+    reverse_proxy localhost:3006
+}

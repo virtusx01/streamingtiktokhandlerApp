@@ -1,0 +1,50 @@
+Help on class OfflineTtsModelConfig in module sherpa_onnx.lib._sherpa_onnx:
+
+class OfflineTtsModelConfig(pybind11_builtins.pybind11_object)
+ |  Method resolution order:
+ |      OfflineTtsModelConfig
+ |      pybind11_builtins.pybind11_object
+ |      builtins.object
+ |
+ |  Methods defined here:
+ |
+ |  __init__(...)
+ |      __init__(*args, **kwargs)
+ |      Overloaded function.
+ |
+ |      1. __init__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsModelConfig) -> None
+ |
+ |      2. __init__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsModelConfig, vits: sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsVitsModelConfig object at 0x00000202B22E4DF0>, matcha: sherpa_onnx.lib._sherpa_onnx.OfflineTtsMatchaModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsMatchaModelConfig object at 0x00000202B22E4DB0>, kokoro: sherpa_onnx.lib._sherpa_onnx.OfflineTtsKokoroModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsKokoroModelConfig object at 0x00000202B22E42F0>, zipvoice: sherpa_onnx.lib._sherpa_onnx.OfflineTtsZipvoiceModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsZipvoiceModelConfig object at 0x00000202B06F5E30>, kitten: sherpa_onnx.lib._sherpa_onnx.OfflineTtsKittenModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsKittenModelConfig object at 0x00000202B06F4630>, pocket: sherpa_onnx.lib._sherpa_onnx.OfflineTtsPocketModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsPocketModelConfig object at 0x00000202B06F4170>, supertonic: sherpa_onnx.lib._sherpa_onnx.OfflineTtsSupertonicModelConfig = <sherpa_onnx.lib._sherpa_onnx.OfflineTtsSupertonicModelConfig object at 0x00000202B0705530>, num_threads: typing.SupportsInt = 1, debug: bool = False, provider: str = 'cpu') -> None
+ |
+ |  __str__(...)
+ |      __str__(self: sherpa_onnx.lib._sherpa_onnx.OfflineTtsModelConfig) -> str
+ |
+ |  ----------------------------------------------------------------------
+ |  Data descriptors defined here:
+ |
+ |  debug
+ |
+ |  kitten
+ |
+ |  kokoro
+ |
+ |  matcha
+ |
+ |  num_threads
+ |
+ |  pocket
+ |
+ |  provider
+ |
+ |  supertonic
+ |
+ |  vits
+ |
+ |  zipvoice
+ |
+ |  ----------------------------------------------------------------------
+ |  Static methods inherited from pybind11_builtins.pybind11_object:
+ |
+ |  __new__(*args, **kwargs) class method of pybind11_builtins.pybind11_object
+ |      Create and return a new object.  See help(type) for accurate signature.
+

@@ -1,0 +1,75 @@
+import asyncio
+import subprocess
+import json
+import os
+import sys
+import httpx
+from TikTokLive import TikTokLiveClient
+from TikTokLive.events import ConnectEvent, GiftEvent
+
+# Fix for Windows asyncio loop issues with subprocess
+if sys.platform == 'win32':
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except:
+        pass
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'config.json')
+GIFT_EVENT_URL = "http://localhost:3000/api/gift-event"
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+config_data = load_config()
+TIKTOK_USERNAME = config_data.get("tiktokUsername", "@your_username").replace("@", "")
+
+# Initialize the client
+client: TikTokLiveClient = TikTokLiveClient(unique_id=TIKTOK_USERNAME)
+
+@client.on(ConnectEvent)
+async def on_connect(event: ConnectEvent):
+    print(f"✅ Connected to @{event.unique_id}'s Room ID: {client.room_id}")
+
+@client.on(GiftEvent)
+async def on_gift(event: GiftEvent):
+    # Reload config dynamically
+    current_config = load_config()
+    rewards = current_config.get("rewards", {})
+    
+    gift_name = event.gift.name
+    username = event.user.unique_id
+    print(f"🎁 Detected Gift: {gift_name} from {username}")
+    
+    # 1. Action Mapping (Specific or Rose Fallback)
+    reward = rewards.get(gift_name)
+    if not reward and "rose" in gift_name.lower():
+        reward = rewards.get("Rose")
+
+    # Construct Payload for Widget (Always include gift info even if no reward mapping)
+    payload = {
+        **(reward or {"type": "none"}),
+        "giftName": gift_name,
+        "username": username
+    }
+
+    # Notify Next.js App (Updates Widget & Triggers ADB if reward exists)
+    async with httpx.AsyncClient() as http_client:
+        try:
+            await http_client.post(GIFT_EVENT_URL, json=payload, timeout=2.0)
+            print(f"--> [Trigger] Notified Next.js for {gift_name}")
+        except Exception as e:
+            print(f"--> [Error] Failed to notify Next.js: {e}")
+
+if __name__ == '__main__':
+    print(f"🚀 Starting TikTok Live Listener for @{TIKTOK_USERNAME}...")
+    print(f"🔗 Target: {GIFT_EVENT_URL}")
+    print("📱 Ensure your phone is connected via ADB.")
+    
+    try:
+        client.run()
+    except Exception as e:
+        print(f"\n❌ Fatal error: {e}")
