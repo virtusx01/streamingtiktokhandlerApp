@@ -4,6 +4,7 @@ import path from 'path';
 import { getSetting, setSetting } from '@/lib/db';
 import { listenerStatus, updateListenerStatus } from '@/lib/listener-state';
 import { emitStatusEvent } from '@/lib/events';
+import { getPythonCommand } from '@/lib/python-runner';
 
 let pythonProcess: ChildProcess | null = null;
 let lastListenerLog: string = '';
@@ -75,12 +76,29 @@ export async function POST(req: Request) {
       lastListenerError = '';
       lastListenerLog = '';
 
+      const pythonCmd = getPythonCommand();
+      if (!pythonCmd) {
+        const errorMsg = `Runtime Python tidak ditemukan di sistem ini (ENOENT). Jika Anda membuka website ini melalui Netlify/Cloud Hosting, server cloud tidak memiliki Python untuk menjalankan listener. Silakan jalankan listener di PC lokal Anda dengan perintah: python main.py ${targetUsername}`;
+        lastListenerError = errorMsg;
+        updateListenerStatus({
+          running: false,
+          connected: false,
+          isLive: false,
+          statusText: 'Server Cloud: Jalankan main.py di PC lokal'
+        });
+        emitStatusEvent(listenerStatus);
+        return NextResponse.json(
+          { error: errorMsg, isCloudServerless: true },
+          { status: 400 }
+        );
+      }
+
       const scriptPath = path.join(process.cwd(), 'main.py');
       const port = process.env.PORT || '3005';
       const baseUrl = process.env.NEXT_BASE_URL || `http://localhost:${port}`;
 
       try {
-        pythonProcess = spawn('python', [scriptPath, targetUsername], {
+        pythonProcess = spawn(pythonCmd, [scriptPath, targetUsername], {
           env: {
             ...process.env,
             PYTHONIOENCODING: 'utf-8',
@@ -128,15 +146,19 @@ export async function POST(req: Request) {
           emitStatusEvent(listenerStatus);
         });
 
-        pythonProcess.on('error', (err) => {
+        pythonProcess.on('error', (err: any) => {
           console.error(`[TikTokListener Process Error]`, err);
-          lastListenerError = err.message;
+          let msg = err.message;
+          if (err.code === 'ENOENT' || err.message?.includes('ENOENT')) {
+            msg = `Runtime Python tidak ditemukan di sistem (ENOENT). Pastikan Python terinstall dan terdaftar di PATH, atau jalankan main.py dari terminal lokal.`;
+          }
+          lastListenerError = msg;
           pythonProcess = null;
           updateListenerStatus({
             running: false,
             connected: false,
             isLive: false,
-            statusText: `Error: ${err.message}`
+            statusText: `Error: ${msg}`
           });
           emitStatusEvent(listenerStatus);
         });

@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import path from 'path';
 import { getSetting } from '@/lib/db';
 import { listenerStatus } from '@/lib/listener-state';
+import { getPythonCommand } from '@/lib/python-runner';
 
 const execAsync = promisify(exec);
 
@@ -38,8 +39,19 @@ export async function GET(req: Request) {
       });
     }
 
+    const pythonCmd = getPythonCommand();
+    if (!pythonCmd) {
+      return NextResponse.json({
+        is_live: Boolean(listenerStatus.isLive),
+        connected: Boolean(listenerStatus.connected),
+        username,
+        statusText: isListenerMatching && listenerStatus.statusText ? listenerStatus.statusText : 'Offline',
+        note: 'Serverless runtime tanpa Python'
+      });
+    }
+
     const scriptPath = path.join(process.cwd(), 'check_live.py');
-    const { stdout } = await execAsync(`python "${scriptPath}" "${username}"`, {
+    const { stdout } = await execAsync(`"${pythonCmd}" "${scriptPath}" "${username}"`, {
       timeout: 8000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     });
