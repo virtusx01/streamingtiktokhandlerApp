@@ -64,3 +64,4 @@ data/*.db
 data/*.db-journal
 data/*.bak
 .gemini/
+supabase/.temp/
