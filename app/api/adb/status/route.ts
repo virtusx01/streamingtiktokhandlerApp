@@ -46,6 +46,6 @@ export async function GET() {
     });
   } catch (err: any) {
     console.error("ADB Status Error:", err);
-    return NextResponse.json({ connected: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ connected: false, devices: [], error: err.message });
   }
 }

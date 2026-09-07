@@ -1447,7 +1447,7 @@ export default function GiveawayPage() {
               </span>
               {targetWaGroup && (
                 <span className="text-gray-400">
-                  • Target: <strong className="text-white">{waGroups.find(g => g.id === targetWaGroup)?.subject || targetWaGroup.split('@')[0]}</strong>
+                  • Target: <strong className="text-white">{waGroups.find(g => g.id === targetWaGroup)?.subject || targetWaGroup?.split?.('@')?.[0] || targetWaGroup}</strong>
                 </span>
               )}
             </div>
@@ -1661,7 +1661,7 @@ export default function GiveawayPage() {
                         style={{ color: i === 0 ? '#FCD34D' : '#374151' }}>#{i + 1}</span>
                       <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
                         style={{ background: `linear-gradient(135deg, ${COLORS[i % COLORS.length]}, ${COLORS[(i + 2) % COLORS.length]})` }}>
-                        {(w.nickname || w.username)[0].toUpperCase()}
+                        {(w.nickname || w.username || "?")[0]?.toUpperCase() || "?"}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-sm truncate">{w.nickname}</p>
@@ -1771,7 +1771,7 @@ export default function GiveawayPage() {
                             <div className="flex items-center gap-2.5">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
                                 style={{ background: `linear-gradient(135deg, ${COLORS[i % COLORS.length]}, ${COLORS[(i + 2) % COLORS.length]})` }}>
-                                {(p.nickname || p.username)[0].toUpperCase()}
+                                {(p.nickname || p.username || "?")[0]?.toUpperCase() || "?"}
                               </div>
                               <div className="min-w-0">
                                 <a
@@ -1931,7 +1931,7 @@ export default function GiveawayPage() {
                       style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
                         style={{ background: 'linear-gradient(135deg, #059669, #047857)' }}>
-                        {(p.nickname || p.username)[0].toUpperCase()}
+                        {(p.nickname || p.username || "?")[0]?.toUpperCase() || "?"}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm truncate text-white">{p.nickname}</p>

@@ -401,9 +401,10 @@ export default function Home() {
     try {
       const res = await fetch('/api/detected-gifts');
       const data = await res.json();
-      setDetectedGifts(data.gifts || []);
+      setDetectedGifts(Array.isArray(data?.gifts) ? data.gifts : []);
     } catch (err: any) {
       console.error("Failed to fetch detected gifts", err);
+      setDetectedGifts([]);
     }
   };
 
@@ -411,9 +412,10 @@ export default function Home() {
     try {
       const res = await fetch('/api/tiktok/gifts');
       const data = await res.json();
-      setTiktokGifts(data);
+      setTiktokGifts(Array.isArray(data) ? data : []);
     } catch (err: any) {
       console.error("Failed to fetch curated gifts", err);
+      setTiktokGifts([]);
     }
   };
 
@@ -421,8 +423,8 @@ export default function Home() {
     try {
       const res = await fetch('/api/events/status');
       const data = await res.json();
-      setWidgetConnected(data.connected);
-      setWidgetListenerCount(data.listeners?.gift || 0);
+      setWidgetConnected(!!data?.connected);
+      setWidgetListenerCount(data?.listeners?.gift || 0);
     } catch (e) {}
   };
 
@@ -442,8 +444,13 @@ export default function Home() {
     try {
       const res = await fetch('/api/adb/status');
       const data = await res.json();
-      setAdbStatus(data);
-    } catch (e) {}
+      setAdbStatus({
+        connected: Boolean(data?.connected),
+        devices: Array.isArray(data?.devices) ? data.devices : []
+      });
+    } catch (e) {
+      setAdbStatus({ connected: false, devices: [] });
+    }
   };
 
   const handleAdbConnect = async () => {
@@ -820,15 +827,15 @@ export default function Home() {
                   <div className="flex-1">
                     <div className="text-sm font-medium flex items-center gap-2">
                       ADB Connection
-                      {adbStatus.connected && adbStatus.devices[0] && (
-                        <span className="text-[10px] text-emerald-400 opacity-60">({adbStatus.devices[0].model})</span>
+                      {adbStatus?.connected && adbStatus?.devices?.[0] && (
+                        <span className="text-[10px] text-emerald-400 opacity-60">({adbStatus.devices[0]?.model || "Device"})</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${adbStatus.connected ? "bg-emerald-500 animate-pulse" : "bg-neutral-800"}`}></div>
+                      <div className={`w-1.5 h-1.5 rounded-full ${adbStatus?.connected ? "bg-emerald-500 animate-pulse" : "bg-neutral-800"}`}></div>
                       <div className="text-[10px] text-neutral-500 uppercase tracking-wider">
-                        {adbStatus.connected ? "Connected" : "Disconnected"}
-                        {adbStatus.devices[0]?.isWireless ? " (Wireless)" : ""}
+                        {adbStatus?.connected ? "Connected" : "Disconnected"}
+                        {adbStatus?.devices?.[0]?.isWireless ? " (Wireless)" : ""}
                       </div>
                     </div>
                   </div>
