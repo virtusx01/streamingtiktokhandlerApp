@@ -105,3 +105,17 @@ export function subscribeToShareEvents(callback: (data: any) => void) {
     eventEmitter.off(SHARE_EVENT, callback);
   };
 }
+
+export const STATUS_EVENT = 'status_event';
+
+export function emitStatusEvent(data: any) {
+  emitWithLog(STATUS_EVENT, data);
+}
+
+export function subscribeToStatusEvents(callback: (data: any) => void) {
+  eventEmitter.on(STATUS_EVENT, callback);
+  return () => {
+    eventEmitter.off(STATUS_EVENT, callback);
+  };
+}
+

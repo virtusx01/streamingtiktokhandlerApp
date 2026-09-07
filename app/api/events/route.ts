@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents } from '@/lib/events';
+import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents } from '@/lib/events';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +57,7 @@ export async function GET(req: Request) {
       unsubscribers.push(subscribeToFollowEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'follow', data })}\n\n`)));
       unsubscribers.push(subscribeToFanEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'fan', data })}\n\n`)));
       unsubscribers.push(subscribeToShareEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'share', data })}\n\n`)));
+      unsubscribers.push(subscribeToStatusEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'status', data })}\n\n`)));
 
       // Keep-alive heartbeat (10s for better browser persistence)
       keepAliveInterval = setInterval(() => {

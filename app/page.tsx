@@ -44,6 +44,9 @@ export default function Home() {
   const [newRewardName, setNewRewardName] = useState("");
   const [isLive, setIsLive] = useState<boolean | null>(null);
   const [listenerRunning, setListenerRunning] = useState(false);
+  const [listenerConnected, setListenerConnected] = useState(false);
+  const [listenerDetail, setListenerDetail] = useState<string>("");
+  const hasAttemptedAutoStartListener = useRef(false);
   // Preset management
   const [presets, setPresets] = useState<{ id: number; name: string; created_at: string }[]>([]);
   const [newPresetName, setNewPresetName] = useState("");
@@ -86,7 +89,7 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // SSE Listener for Dashboard Notifications
+  // SSE Listener for Dashboard Notifications & Live Status Sync
   useEffect(() => {
     const eventSource = new EventSource("/api/events");
     
@@ -96,6 +99,14 @@ export default function Home() {
         const type = payload.type;
         const data = payload.data || payload;
         
+        if (type === 'status') {
+          if (data.isLive !== undefined) setIsLive(Boolean(data.isLive));
+          if (data.connected !== undefined) setListenerConnected(Boolean(data.connected));
+          if (data.running !== undefined) setListenerRunning(Boolean(data.running));
+          if (data.statusText) setListenerDetail(data.statusText);
+          return;
+        }
+
         // We only show high-value events in the dashboard feed (gift, share, follow, like-milestone)
         if (!['gift', 'share', 'follow', 'like'].includes(type)) return;
 
@@ -134,42 +145,94 @@ export default function Home() {
     try {
       const res = await fetch("/api/listener");
       const data = await res.json();
-      setListenerRunning(data.running);
+      setListenerRunning(Boolean(data?.running));
+      if (data?.status) {
+        setListenerConnected(Boolean(data.status.connected));
+        if (data.status.statusText) {
+          setListenerDetail(data.status.statusText);
+        }
+        if (data.status.isLive !== undefined) {
+          setIsLive(Boolean(data.status.isLive));
+        }
+      }
       
-      if (config?.autoStartListener && !data.running) {
-          handleListenerAction("start");
+      if (config?.autoStartListener && !data?.running && !hasAttemptedAutoStartListener.current) {
+        hasAttemptedAutoStartListener.current = true;
+        handleListenerAction("start");
       }
     } catch (err) {
       console.error("Failed to check listener status", err);
     }
   };
 
-  const handleListenerAction = async (action: "start" | "stop") => {
+  const handleListenerAction = async (action: "start" | "stop", overrideUser?: string) => {
     try {
+      const targetUser = overrideUser || config?.tiktokUsername || 'onlyvirtus';
       const res = await fetch("/api/listener", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ 
+          action,
+          username: targetUser,
+          forceRestart: true 
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         setListenerRunning(action === "start");
-        setTimeout(() => checkListenerStatus(), 1000);
+        if (action === "start") {
+          setListenerDetail(`Menghubungkan ke ${targetUser}...`);
+        } else {
+          setListenerConnected(false);
+          setIsLive(false);
+          setListenerDetail("Listener dihentikan.");
+        }
+        setTimeout(() => {
+          checkListenerStatus();
+          checkLiveStatus();
+        }, 1200);
       } else if (data?.error) {
-        console.warn("Listener action warning:", data.error);
+        alert("Gagal mengontrol listener: " + data.error);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Listener action failed", err);
     }
   };
 
-  const checkLiveStatus = async () => {
+  const checkLiveStatus = async (overrideUser?: string) => {
     try {
-      const res = await fetch("/api/status");
+      const user = overrideUser || config?.tiktokUsername || 'onlyvirtus';
+      const cleanUser = user.replace(/^@/, '').trim();
+      const res = await fetch(`/api/status?username=${encodeURIComponent(cleanUser)}`);
       const data = await res.json();
-      setIsLive(data.is_live);
+      if (data.is_live !== undefined) {
+        setIsLive(Boolean(data.is_live));
+      }
+      if (data.connected !== undefined && data.connected) {
+        setListenerConnected(true);
+      }
+      if (data.statusText && !listenerDetail) {
+        setListenerDetail(data.statusText);
+      }
     } catch (err) {
       console.error("Failed to check status", err);
+    }
+  };
+
+  const handleSaveAndConnectUsername = async () => {
+    if (!config) return;
+    try {
+      setSaving(true);
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      await handleListenerAction("start", config.tiktokUsername);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -722,20 +785,53 @@ export default function Home() {
               <div>
                 <label className="block text-sm font-medium text-neutral-400 mb-2 flex items-center justify-between">
                   <span>TikTok Username</span>
-                  {isLive !== null && (
-                    <span className={`flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-full ${isLive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`}></span>
-                      {isLive ? 'LIVE' : 'OFFLINE'}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {isLive ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        LIVE
+                      </span>
+                    ) : listenerRunning ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                        STANDBY
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                        OFFLINE
+                      </span>
+                    )}
+                  </div>
                 </label>
-                <input 
-                  type="text" 
-                  value={config.tiktokUsername}
-                  onChange={(e) => setConfig({ ...config, tiktokUsername: e.target.value })}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-emerald-500/50 outline-none transition"
-                  placeholder="e.g. @username"
-                />
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={config.tiktokUsername}
+                    onChange={(e) => setConfig({ ...config, tiktokUsername: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleSaveAndConnectUsername();
+                      }
+                    }}
+                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-emerald-500/50 outline-none transition font-mono text-sm"
+                    placeholder="e.g. @username"
+                  />
+                  <button
+                    onClick={handleSaveAndConnectUsername}
+                    disabled={saving}
+                    className="px-4 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap"
+                    title="Simpan username dan hubungkan listener"
+                  >
+                    <Check size={14} /> Hubungkan
+                  </button>
+                </div>
+                {listenerDetail && (
+                  <p className="text-[11px] text-neutral-400 mt-2 flex items-center gap-1.5 bg-neutral-950/70 p-2 rounded-lg border border-neutral-800/80">
+                    <span className="text-neutral-500">ℹ️ Status:</span> 
+                    <span className="text-neutral-300 font-medium">{listenerDetail}</span>
+                  </p>
+                )}
               </div>
 
               {/* ADB Connection Section */}
@@ -853,11 +949,13 @@ export default function Home() {
               <div className="flex items-center justify-between p-3 bg-neutral-950 rounded-lg border border-neutral-800">
                 <div>
                   <div className="text-sm font-medium">TikTok Listener</div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">{listenerRunning ? "Active" : "Stopped"}</div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">
+                    {listenerConnected ? "Terhubung ke Live" : listenerRunning ? "Active (Standby)" : "Stopped"}
+                  </div>
                 </div>
                 <button 
                   onClick={() => handleListenerAction(listenerRunning ? "stop" : "start")}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${listenerRunning ? "bg-red-500/10 text-red-500 hover:bg-red-500/20" : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"}`}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${listenerRunning ? "bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"}`}
                 >
                   {listenerRunning ? "Stop" : "Start"}
                 </button>

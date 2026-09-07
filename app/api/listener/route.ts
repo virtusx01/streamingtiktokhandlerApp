@@ -1,43 +1,86 @@
 import { NextResponse } from 'next/server';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
-import { getSetting } from '@/lib/db';
+import { getSetting, setSetting } from '@/lib/db';
+import { listenerStatus, updateListenerStatus } from '@/lib/listener-state';
+import { emitStatusEvent } from '@/lib/events';
 
 let pythonProcess: ChildProcess | null = null;
 let lastListenerLog: string = '';
 let lastListenerError: string = '';
 
 export async function GET() {
-  return NextResponse.json({
-    running: pythonProcess !== null && !pythonProcess.killed,
-    pid: pythonProcess?.pid || null,
+  const isRunning = pythonProcess !== null && !pythonProcess.killed;
+  updateListenerStatus({
+    running: isRunning,
     lastLog: lastListenerLog,
     lastError: lastListenerError
+  });
+
+  return NextResponse.json({
+    running: isRunning,
+    pid: pythonProcess?.pid || null,
+    lastLog: lastListenerLog,
+    lastError: lastListenerError,
+    status: listenerStatus
   });
 }
 
 export async function POST(req: Request) {
   try {
-    const { action } = await req.json();
+    const body = await req.json();
+    const { action } = body;
+
+    // Handle internal status reports from main.py
+    if (action === 'report_status') {
+      const updated = updateListenerStatus({
+        connected: Boolean(body.connected),
+        isLive: Boolean(body.isLive),
+        username: body.username || listenerStatus.username,
+        roomId: body.roomId || listenerStatus.roomId,
+        statusText: body.statusText || (body.connected ? 'Terhubung' : 'Standby'),
+      });
+      emitStatusEvent(updated);
+      return NextResponse.json({ ok: true, status: updated });
+    }
 
     if (action === 'start') {
+      let targetUsername = body.username ? String(body.username).replace(/^@/, '').trim() : '';
+      if (!targetUsername) {
+        const rawUsername = getSetting('tiktokUsername', '@onlyvirtus');
+        targetUsername = typeof rawUsername === 'string' ? rawUsername.replace(/^@/, '').trim() : 'onlyvirtus';
+      }
+      if (!targetUsername) targetUsername = 'onlyvirtus';
+
+      // If user passed a username, persist it
+      setSetting('tiktokUsername', `@${targetUsername}`);
+
+      // If already running with same username
       if (pythonProcess && !pythonProcess.killed) {
-        return NextResponse.json({ message: 'Listener already running', pid: pythonProcess.pid });
+        if (listenerStatus.username.toLowerCase() === targetUsername.toLowerCase() && !body.forceRestart) {
+          return NextResponse.json({
+            message: 'Listener already running',
+            pid: pythonProcess.pid,
+            username: targetUsername,
+            status: listenerStatus
+          });
+        }
+        // Different username requested: kill previous process first
+        try {
+          pythonProcess.kill();
+        } catch (e) {}
+        pythonProcess = null;
       }
 
       lastListenerError = '';
       lastListenerLog = '';
-
-      const rawUsername = getSetting('tiktokUsername', '@onlyvirtus');
-      let username = typeof rawUsername === 'string' ? rawUsername.replace(/^@/, '').trim() : 'onlyvirtus';
-      if (!username) username = 'onlyvirtus';
 
       const scriptPath = path.join(process.cwd(), 'main.py');
       const port = process.env.PORT || '3005';
       const baseUrl = process.env.NEXT_BASE_URL || `http://localhost:${port}`;
 
       try {
-        pythonProcess = spawn('python', [scriptPath, username], {
+        pythonProcess = spawn('python', [scriptPath, targetUsername], {
           env: {
             ...process.env,
             PYTHONIOENCODING: 'utf-8',
@@ -48,36 +91,70 @@ export async function POST(req: Request) {
           detached: false
         });
 
+        updateListenerStatus({
+          running: true,
+          connected: false,
+          isLive: false,
+          username: targetUsername,
+          statusText: `Menghubungkan ke @${targetUsername}...`
+        });
+        emitStatusEvent(listenerStatus);
+
         pythonProcess.stdout?.on('data', (data) => {
           const text = data.toString().trim();
-          lastListenerLog = text;
-          console.log(`[TikTokListener] ${text}`);
+          if (text) {
+            lastListenerLog = text;
+            console.log(`[TikTokListener] ${text}`);
+          }
         });
 
         pythonProcess.stderr?.on('data', (data) => {
           const text = data.toString().trim();
-          lastListenerError = text;
-          console.error(`[TikTokListener ERR] ${text}`);
+          if (text) {
+            lastListenerError = text;
+            console.error(`[TikTokListener ERR] ${text}`);
+          }
         });
 
         pythonProcess.on('exit', (code) => {
           console.log(`[TikTokListener] Process exited with code ${code}`);
           pythonProcess = null;
+          updateListenerStatus({
+            running: false,
+            connected: false,
+            isLive: false,
+            statusText: `Listener berhenti (kode: ${code})`
+          });
+          emitStatusEvent(listenerStatus);
         });
 
         pythonProcess.on('error', (err) => {
           console.error(`[TikTokListener Process Error]`, err);
           lastListenerError = err.message;
           pythonProcess = null;
+          updateListenerStatus({
+            running: false,
+            connected: false,
+            isLive: false,
+            statusText: `Error: ${err.message}`
+          });
+          emitStatusEvent(listenerStatus);
         });
 
         return NextResponse.json({
           message: 'Listener started',
           pid: pythonProcess.pid,
-          username
+          username: targetUsername,
+          status: listenerStatus
         });
       } catch (spawnErr: any) {
         lastListenerError = spawnErr.message;
+        updateListenerStatus({
+          running: false,
+          connected: false,
+          isLive: false,
+          statusText: `Gagal start: ${spawnErr.message}`
+        });
         return NextResponse.json(
           { error: 'Gagal menjalankan listener Python: ' + spawnErr.message },
           { status: 500 }
@@ -87,11 +164,19 @@ export async function POST(req: Request) {
 
     if (action === 'stop') {
       if (pythonProcess) {
-        pythonProcess.kill();
+        try {
+          pythonProcess.kill();
+        } catch (e) {}
         pythonProcess = null;
-        return NextResponse.json({ message: 'Listener stopped' });
       }
-      return NextResponse.json({ message: 'Listener not running' });
+      updateListenerStatus({
+        running: false,
+        connected: false,
+        isLive: false,
+        statusText: 'Listener dihentikan.'
+      });
+      emitStatusEvent(listenerStatus);
+      return NextResponse.json({ message: 'Listener stopped', status: listenerStatus });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
