@@ -1,5 +1,16 @@
+import sys
+import io
 import asyncio
 import subprocess
+
+# Fix Windows console encoding for Unicode emojis
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, GiftEvent, CommentEvent, LikeEvent, JoinEvent, FollowEvent, SubscribeEvent, ShareEvent
 
@@ -9,7 +20,7 @@ import os
 import json
 from collections import deque
 
-# VERSION: 2.6 (Consolidated - Double Notification Fix + Local Dedup)
+# VERSION: 2.7 (Unicode safe + Dynamic Username + Resilient Connection)
 
 # Local cache to prevent redundant event reporting (last 100 IDs)
 seen_event_ids = deque(maxlen=100)
@@ -18,21 +29,25 @@ seen_event_ids = deque(maxlen=100)
 # CONFIGURATION
 # ==========================================
 def get_username_sync():
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        return sys.argv[1].strip().lstrip('@')
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'app.db')
-    if not os.path.exists(db_path): return "@onlyvirtus"
-    import sqlite3
-    try:
-        conn = sqlite3.connect(db_path, timeout=5.0)
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = 'tiktokUsername'")
-        row = cursor.fetchone()
-        conn.close()
-        if row: return json.loads(row[0])
-    except: pass
-    return "@onlyvirtus"
+    if os.path.exists(db_path):
+        import sqlite3
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = 'tiktokUsername'")
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                val = json.loads(row[0]) if isinstance(row[0], str) and (row[0].startswith('"') or row[0].startswith('{')) else row[0]
+                return str(val).strip().lstrip('@')
+        except: pass
+    return "onlyvirtus"
 
 TIKTOK_USERNAME = get_username_sync()
-BASE_URL = "http://localhost:3005"
+BASE_URL = os.environ.get("NEXT_BASE_URL", "http://localhost:3005")
 
 # Helper for "BetterProto" safety
 def safe_get(obj, attr, fallback=None):
@@ -253,8 +268,18 @@ async def on_share(event: ShareEvent):
     except: pass
 
 if __name__ == '__main__':
-    print(f"🚀 LISTENER STARTING (Standby Optimization v3.0)...")
-    try:
-        client.run()
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
+    print(f"🚀 LISTENER STARTING for @{TIKTOK_USERNAME} (Backend: {BASE_URL})...")
+    while True:
+        try:
+            client.run()
+        except KeyboardInterrupt:
+            print("🛑 Listener dihentikan.")
+            break
+        except Exception as e:
+            err_name = type(e).__name__
+            if "Offline" in err_name or "offline" in str(e).lower():
+                print(f"⏳ @{TIKTOK_USERNAME} sedang Offline. Standby mengecek ulang dalam 15 detik...")
+                time.sleep(15)
+            else:
+                print(f"⚠️ Status listener ({err_name}): {e}. Mencoba kembali dalam 10 detik...")
+                time.sleep(10)

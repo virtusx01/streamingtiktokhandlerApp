@@ -151,7 +151,13 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      setListenerRunning(action === "start");
+      const data = await res.json();
+      if (res.ok) {
+        setListenerRunning(action === "start");
+        setTimeout(() => checkListenerStatus(), 1000);
+      } else if (data?.error) {
+        console.warn("Listener action warning:", data.error);
+      }
     } catch (err) {
       console.error("Listener action failed", err);
     }
@@ -171,31 +177,52 @@ export default function Home() {
     try {
       const res = await fetch("/api/config");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
       
-      // Ensure defaults for new fields
+      // Ensure defaults for all fields
       setConfig({
+        tiktokUsername: "@onlyvirtus",
+        autoStartListener: true,
         adbMode: "usb",
         adbIP: "",
         adbPort: "5555",
         commentConfig: {
           theme: "modern",
           borderRadius: 24,
-          maxLines: 15
+          maxComments: 15
         },
         widgetConfig: {
           elements: [],
           ttsEnabled: true,
           likeThreshold: 100,
           milestoneMode: 'global',
-          ...data.widgetConfig
+          ...(data?.widgetConfig || {})
         },
         triggerRewardsEnabled: true,
-        ...data
+        rewards: {},
+        ...(data || {})
       });
     } catch (err) {
-      console.error(err);
-      alert("Failed to load configuration");
+      console.warn("Using default configuration:", err);
+      setConfig({
+        tiktokUsername: "@onlyvirtus",
+        autoStartListener: true,
+        adbMode: "usb",
+        adbIP: "",
+        adbPort: "5555",
+        commentConfig: {
+          theme: "modern",
+          borderRadius: 24,
+          maxComments: 15
+        },
+        widgetConfig: {
+          elements: [],
+          ttsEnabled: true,
+          likeThreshold: 100,
+          milestoneMode: 'global'
+        },
+        triggerRewardsEnabled: true,
+        rewards: {}
+      });
     } finally {
       setLoading(false);
     }

@@ -118,10 +118,22 @@ export default function CommentPage() {
   });
   
   const [showSettings, setShowSettings] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [activeTab, setActiveTab] = useState<'display' | 'style' | 'alerts' | 'layout'>('display');
   const [isSaving, setIsSaving] = useState(false);
   const [audioLocked, setAudioLocked] = useState(true);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.authenticated && data.user?.role === 'admin') {
+          setIsAdmin(true);
+        }
+      })
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const sseConnection = useRef<EventSource | null>(null);
@@ -601,8 +613,9 @@ export default function CommentPage() {
       </motion.div>
 
       {/* Floating Controls Overlay */}
-      <div className="fixed bottom-6 right-6 flex flex-col items-end gap-3 z-[100]">
-        <AnimatePresence>
+      {isAdmin && (
+        <div className="fixed bottom-6 right-6 flex flex-col items-end gap-3 z-[100]">
+          <AnimatePresence>
           {showSettings && (
             <motion.div 
               initial={{ y: 20, opacity: 0, scale: 0.95 }}
@@ -1061,6 +1074,7 @@ export default function CommentPage() {
           {showSettings ? <X size={24} /> : <Settings size={24} className="group-hover:rotate-90 transition-transform duration-700" />}
         </button>
       </div>
+      )}
 
       {/* Audio Locked Overlay */}
       <AudioStatus locked={audioLocked} onClick={() => {

@@ -1,162 +1,270 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { supabaseAdmin } from './supabase';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'app.db');
+const memorySettings: Record<string, string> = {
+  tiktokUsername: '"@onlyvirtus"',
+  autoStartListener: 'true',
+  triggerRewardsEnabled: 'true',
+  adbMode: '"usb"',
+  adbIP: '""',
+  adbPort: '"5555"',
+  giveaway_wa_mandatory: 'false',
+  giveaway_target_wa_group: '""',
+  widgetConfig: JSON.stringify({
+    elements: [],
+    ttsEnabled: true,
+    likeThreshold: 100,
+    milestoneMode: 'global'
+  }),
+  commentConfig: JSON.stringify({
+    theme: 'modern',
+    borderRadius: 24,
+    maxComments: 15,
+    position: { x: 0, y: 0 }
+  })
+};
 
-// Ensure data directory exists
-const dataDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+const memoryRewards: Record<string, any> = {};
+
+// Background sync from Supabase into memory
+async function syncFromSupabase() {
+  try {
+    const { data } = await supabaseAdmin.from('settings').select('*');
+    if (data && Array.isArray(data)) {
+      data.forEach((row: any) => {
+        if (row && row.key) memorySettings[row.key] = row.value;
+      });
+    }
+  } catch {}
+
+  try {
+    const { data } = await supabaseAdmin.from('rewards').select('*');
+    if (data && Array.isArray(data)) {
+      data.forEach((row: any) => {
+        if (row && row.name) {
+          try {
+            memoryRewards[row.name] = { actions: JSON.parse(row.actions) };
+          } catch {
+            memoryRewards[row.name] = { actions: [] };
+          }
+        }
+      });
+    }
+  } catch {}
 }
 
-const db = new Database(DB_PATH);
+syncFromSupabase();
 
-// Initialize schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
+function safeSupabaseUpsert(table: string, payload: any) {
+  Promise.resolve(supabaseAdmin.from(table).upsert(payload)).catch(() => {});
+}
 
-  CREATE TABLE IF NOT EXISTS rewards (
-    name TEXT PRIMARY KEY,
-    actions TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS reward_presets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    data TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS detected_gifts (
-    name TEXT PRIMARY KEY,
-    count INTEGER DEFAULT 1,
-    last_seen TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS user_likes (
-    username TEXT PRIMARY KEY,
-    nickname TEXT,
-    total_likes INTEGER DEFAULT 0,
-    last_milestone INTEGER DEFAULT 0,
-    last_updated TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS giveaway_participants (
-    username TEXT PRIMARY KEY,
-    nickname TEXT,
-    profile_picture TEXT,
-    has_followed INTEGER DEFAULT 0,
-    has_liked INTEGER DEFAULT 0,
-    has_shared INTEGER DEFAULT 0,
-    has_commented INTEGER DEFAULT 0,
-    is_eligible INTEGER DEFAULT 0,
-    is_tester INTEGER DEFAULT 0,
-    registered_at TEXT DEFAULT (datetime('now')),
-    last_updated TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS wa_group_members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_jid TEXT NOT NULL,
-    jid TEXT NOT NULL,
-    phone TEXT,
-    member_tag TEXT,
-    push_name TEXT,
-    role TEXT,
-    has_absen INTEGER DEFAULT 0,
-    absen_at TEXT,
-    last_seen TEXT DEFAULT (datetime('now')),
-    UNIQUE(group_jid, jid)
-  );
-`);
-
-db.prepare(`
-    INSERT INTO settings (key, value) VALUES ('lastMilestonePerformed', '0')
-    ON CONFLICT(key) DO NOTHING
-`).run();
-
-// Migration: safely add columns to existing databases
-try {
-  db.exec(`ALTER TABLE giveaway_participants ADD COLUMN is_tester INTEGER DEFAULT 0`);
-} catch (_) {}
+let db: any = null;
 
 try {
-  db.exec(`ALTER TABLE giveaway_participants ADD COLUMN has_liked INTEGER DEFAULT 0`);
-} catch (_) {}
+  const Database = require('better-sqlite3');
+  const DB_PATH = path.join(process.cwd(), 'data', 'app.db');
 
-try {
-  db.exec(`ALTER TABLE giveaway_participants ADD COLUMN has_wa_group INTEGER DEFAULT 0`);
-} catch (_) {}
+  const dataDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dataDir)) {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch {}
+  }
 
-try {
-  db.exec(`ALTER TABLE giveaway_participants ADD COLUMN wa_member_tag TEXT`);
-} catch (_) {}
+  db = new Database(DB_PATH);
 
-try {
-  db.exec(`ALTER TABLE giveaway_participants ADD COLUMN wa_phone TEXT`);
-} catch (_) {}
+  // Initialize schema
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
 
-try {
-  db.exec(`ALTER TABLE wa_group_members ADD COLUMN has_absen INTEGER DEFAULT 0`);
-} catch (_) {}
+    CREATE TABLE IF NOT EXISTS rewards (
+      name TEXT PRIMARY KEY,
+      actions TEXT
+    );
 
-try {
-  db.exec(`ALTER TABLE wa_group_members ADD COLUMN absen_at TEXT`);
-} catch (_) {}
+    CREATE TABLE IF NOT EXISTS reward_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      data TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS detected_gifts (
+      name TEXT PRIMARY KEY,
+      count INTEGER DEFAULT 1,
+      last_seen TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_likes (
+      username TEXT PRIMARY KEY,
+      nickname TEXT,
+      total_likes INTEGER DEFAULT 0,
+      last_milestone INTEGER DEFAULT 0,
+      last_updated TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS giveaway_participants (
+      username TEXT PRIMARY KEY,
+      nickname TEXT,
+      profile_picture TEXT,
+      has_followed INTEGER DEFAULT 0,
+      has_liked INTEGER DEFAULT 0,
+      has_shared INTEGER DEFAULT 0,
+      has_commented INTEGER DEFAULT 0,
+      has_wa_group INTEGER DEFAULT 0,
+      wa_member_tag TEXT,
+      wa_phone TEXT,
+      is_eligible INTEGER DEFAULT 0,
+      is_tester INTEGER DEFAULT 0,
+      registered_at TEXT DEFAULT (datetime('now')),
+      last_updated TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS wa_group_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_jid TEXT NOT NULL,
+      jid TEXT NOT NULL,
+      phone TEXT,
+      member_tag TEXT,
+      push_name TEXT,
+      role TEXT,
+      has_absen INTEGER DEFAULT 0,
+      absen_at TEXT,
+      last_seen TEXT DEFAULT (datetime('now')),
+      UNIQUE(group_jid, jid)
+    );
+  `);
+
+  try {
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('lastMilestonePerformed', '0')
+      ON CONFLICT(key) DO NOTHING
+    `).run();
+  } catch {}
+
+  try { db.exec(`ALTER TABLE giveaway_participants ADD COLUMN is_tester INTEGER DEFAULT 0`); } catch (_) {}
+  try { db.exec(`ALTER TABLE giveaway_participants ADD COLUMN has_liked INTEGER DEFAULT 0`); } catch (_) {}
+  try { db.exec(`ALTER TABLE giveaway_participants ADD COLUMN has_wa_group INTEGER DEFAULT 0`); } catch (_) {}
+  try { db.exec(`ALTER TABLE giveaway_participants ADD COLUMN wa_member_tag TEXT`); } catch (_) {}
+  try { db.exec(`ALTER TABLE giveaway_participants ADD COLUMN wa_phone TEXT`); } catch (_) {}
+  try { db.exec(`ALTER TABLE wa_group_members ADD COLUMN has_absen INTEGER DEFAULT 0`); } catch (_) {}
+  try { db.exec(`ALTER TABLE wa_group_members ADD COLUMN absen_at TEXT`); } catch (_) {}
+} catch (e: any) {
+  console.warn('[DB] SQLite is unavailable or read-only (cloud/serverless environment). Operating via Memory & Supabase:', e.message);
+  db = null;
+}
 
 export default db;
 
 export function getSetting(key: string, defaultValue: any = null) {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
-    if (!row) return defaultValue;
+  if (db) {
     try {
-        return JSON.parse(row.value);
-    } catch (e) {
-        return row.value;
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+      if (row) {
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return row.value;
+        }
+      }
+    } catch {}
+  }
+
+  if (memorySettings[key] !== undefined) {
+    try {
+      return JSON.parse(memorySettings[key]);
+    } catch {
+      return memorySettings[key];
     }
+  }
+
+  return defaultValue;
 }
 
 export function setSetting(key: string, value: any) {
-    const valStr = typeof value === 'string' ? value : JSON.stringify(value);
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, valStr);
+  const valStr = typeof value === 'string' ? value : JSON.stringify(value);
+  memorySettings[key] = valStr;
+
+  if (db) {
+    try {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, valStr);
+    } catch {}
+  }
+
+  // Asynchronously synchronize to Supabase
+  safeSupabaseUpsert('settings', { key, value: valStr });
 }
 
 export function getRewards() {
-    const rows = db.prepare('SELECT * FROM rewards').all() as { name: string, actions: string }[];
-    const rewards: Record<string, any> = {};
-    rows.forEach(row => {
+  const rewards: Record<string, any> = { ...memoryRewards };
+  if (db) {
+    try {
+      const rows = db.prepare('SELECT * FROM rewards').all() as { name: string, actions: string }[];
+      rows.forEach(row => {
         try {
-            const parsed = JSON.parse(row.actions);
-            // MIGRATION: If it's a single action object (has type but not an array), wrap it
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.type) {
-                rewards[row.name] = { actions: [parsed] };
-            } else if (Array.isArray(parsed)) {
-                rewards[row.name] = { actions: parsed };
-            } else {
-                rewards[row.name] = { actions: [] };
-            }
-        } catch (e) {
+          const parsed = JSON.parse(row.actions);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.type) {
+            rewards[row.name] = { actions: [parsed] };
+          } else if (Array.isArray(parsed)) {
+            rewards[row.name] = { actions: parsed };
+          } else {
             rewards[row.name] = { actions: [] };
+          }
+        } catch (e) {
+          rewards[row.name] = { actions: [] };
         }
-    });
-    return rewards;
+      });
+    } catch {}
+  }
+  return rewards;
 }
 
 export function setReward(name: string, actions: any) {
-    // Ensure we always store an array
-    const actionsArray = Array.isArray(actions) ? actions : (actions?.actions || []);
-    db.prepare('INSERT OR REPLACE INTO rewards (name, actions) VALUES (?, ?)').run(name, JSON.stringify(actionsArray));
+  const actionsArray = Array.isArray(actions) ? actions : (actions?.actions || []);
+  memoryRewards[name] = { actions: actionsArray };
+  if (db) {
+    try {
+      db.prepare('INSERT OR REPLACE INTO rewards (name, actions) VALUES (?, ?)').run(name, JSON.stringify(actionsArray));
+    } catch {}
+  }
+  safeSupabaseUpsert('rewards', { name, actions: JSON.stringify(actionsArray) });
 }
 
 export function renameReward(oldName: string, newName: string) {
-    db.prepare('UPDATE rewards SET name = ? WHERE name = ?').run(newName, oldName);
+  if (memoryRewards[oldName]) {
+    memoryRewards[newName] = memoryRewards[oldName];
+    delete memoryRewards[oldName];
+  }
+  if (db) {
+    try {
+      db.prepare('UPDATE rewards SET name = ? WHERE name = ?').run(newName, oldName);
+    } catch {}
+  }
+  (async () => {
+    try {
+      await supabaseAdmin.from('rewards').delete().eq('name', oldName);
+      await supabaseAdmin.from('rewards').upsert({ name: newName, actions: JSON.stringify(memoryRewards[newName]?.actions || []) });
+    } catch {}
+  })();
 }
 
 export function deleteAllRewards() {
-    db.prepare('DELETE FROM rewards').run();
+  for (const k in memoryRewards) delete memoryRewards[k];
+  if (db) {
+    try {
+      db.prepare('DELETE FROM rewards').run();
+    } catch {}
+  }
+  (async () => {
+    try {
+      await supabaseAdmin.from('rewards').delete().neq('name', '');
+    } catch {}
+  })();
 }
 
 // ==========================================

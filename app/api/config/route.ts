@@ -76,8 +76,24 @@ export async function GET() {
 
     return NextResponse.json(config);
   } catch (err: any) {
-    console.error('Failed to get config from DB:', err);
-    return NextResponse.json({ error: 'Failed to read config' }, { status: 500 });
+    console.error('Failed to get config from DB, returning safe defaults:', err);
+    return NextResponse.json({
+      tiktokUsername: '@onlyvirtus',
+      autoStartListener: true,
+      widgetConfig: {},
+      commentConfig: {
+        theme: 'modern',
+        borderRadius: 24,
+        maxComments: 15,
+        position: { x: 0, y: 0 }
+      },
+      textBerjalanConfig: {},
+      rewards: {},
+      triggerRewardsEnabled: true,
+      adbMode: 'usb',
+      adbIP: '',
+      adbPort: '5555'
+    });
   }
 }
 

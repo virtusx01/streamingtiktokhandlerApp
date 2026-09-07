@@ -13,7 +13,10 @@ const PUBLIC_PREFIXES = [
   '/api/auth/login',
   '/api/auth/logout',
   // Allow internal scripts/listeners/webhooks to communicate without browser cookies
-  '/api'
+  '/api',
+  // Public stream overlays (settings button hidden if not admin)
+  '/widget',
+  '/comment'
 ];
 
 async function isValidAdmin(token?: string): Promise<boolean> {

@@ -204,6 +204,7 @@ export default function WidgetPage() {
   const [history, setHistory] = useState<Element[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showEditor, setShowEditor] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isGreenScreen, setIsGreenScreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -213,6 +214,17 @@ export default function WidgetPage() {
   const [referenceTab, setReferenceTab] = useState<string | null>(null);
   const [showGuides, setShowGuides] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.authenticated && data.user?.role === 'admin') {
+          setIsAdmin(true);
+        }
+      })
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const [config, setConfig] = useState<WidgetConfig>(DEFAULT_CONFIG);
   const [activeNotification, setActiveNotification] = useState<NotificationItem | null>(null);
@@ -966,7 +978,7 @@ export default function WidgetPage() {
 
   return (
     <div className={`fixed inset-0 font-sans transition-colors duration-500 ${isGreenScreen ? "bg-[#00ff00]" : "bg-transparent"}`}>
-      {showEditor && (
+      {isAdmin && showEditor && (
         <>
             <div className="absolute top-4 left-4 right-4 z-50 flex items-center gap-3 bg-neutral-950/80 backdrop-blur-md p-3 rounded-2xl border border-white/5">
                 <div className="flex gap-2 border-r border-white/10 pr-3"><button onClick={() => addElement("text")} className="p-2 hover:bg-emerald-500/20 text-emerald-400 rounded-xl transition"><Type size={20} /></button><button onClick={() => addElement("image")} className="p-2 hover:bg-emerald-500/20 text-emerald-400 rounded-xl transition"><ImageIcon size={20} /></button></div>
@@ -1058,7 +1070,9 @@ export default function WidgetPage() {
            );
         })}
       </div>
-      <button onClick={() => setShowEditor(!showEditor)} className="fixed bottom-6 right-6 p-4 bg-black/40 text-white rounded-full backdrop-blur-md opacity-30 hover:opacity-100 transition z-[200]">{showEditor ? <EyeOff size={20} /> : <Eye size={20} />}</button>
+      {isAdmin && (
+        <button onClick={() => setShowEditor(!showEditor)} className="fixed bottom-6 right-6 p-4 bg-black/40 text-white rounded-full backdrop-blur-md opacity-30 hover:opacity-100 transition z-[200]">{showEditor ? <EyeOff size={20} /> : <Eye size={20} />}</button>
+      )}
       <style jsx global>{`@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;700;800&family=Passion+One:wght@400;900&display=swap'); body { background: transparent !important; overflow: hidden; }`}</style>
     </div>
   );

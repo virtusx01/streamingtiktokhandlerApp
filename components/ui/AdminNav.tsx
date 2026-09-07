@@ -10,8 +10,8 @@ export default function AdminNav() {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Do not display on login page
-  if (pathname === '/login') return null;
+  // Do not display on login page or stream overlay pages
+  if (pathname === '/login' || pathname === '/widget' || pathname === '/comment') return null;
 
   const handleLogout = async () => {
     setLoggingOut(true);
