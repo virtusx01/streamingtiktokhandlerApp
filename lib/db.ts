@@ -526,20 +526,56 @@ export function setTargetWaGroup(groupJid: string) {
 }
 
 export function isWithinAbsenPeriod(date: Date = new Date()): boolean {
-  const start = new Date('2026-09-06T00:00:00+07:00');
-  const end   = new Date('2026-09-08T23:59:59+07:00');
-  return date >= start && date <= end;
+  const windowEnabled = getSetting('giveaway_absen_window_enabled', false);
+  if (!windowEnabled) {
+    // Jika window tidak diaktifkan, selalu izinkan deteksi ABSEN!
+    return true;
+  }
+  try {
+    const startStr = getSetting('giveaway_absen_start', '2026-09-06T00:00:00+07:00');
+    const endStr   = getSetting('giveaway_absen_end', '2026-09-08T23:59:59+07:00');
+    const start = new Date(startStr);
+    const end   = new Date(endStr);
+    end.setHours(23, 59, 59, 999);
+    return date >= start && date <= end;
+  } catch {
+    return true;
+  }
 }
 
 export function recordAbsenMessage(groupJid: string, senderJid: string, memberTag?: string, pushName?: string) {
   const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
   const nowIso = new Date().toISOString();
 
-  let finalTag = memberTag && memberTag.trim() ? memberTag.trim() : '';
+  let finalTag = memberTag && memberTag.trim() ? memberTag.trim().replace(/^@/, '') : '';
+
+  // 1. Jika belum ada tag, cari dari data member grup yang sudah tersimpan (berdasarkan JID atau No HP)
   if (!finalTag) {
-    const existing = getWaGroupMembers(groupJid).find(m => m.jid === senderJid);
-    if (existing && existing.member_tag) {
-      finalTag = existing.member_tag;
+    const existing = getWaGroupMembers(groupJid).find(m => 
+      m.jid === senderJid || (m.phone && phone && m.phone === phone)
+    );
+    if (existing && existing.member_tag && !/^\d{10,}$/.test(existing.member_tag)) {
+      finalTag = existing.member_tag.replace(/^@/, '').trim();
+    }
+  }
+
+  // 2. Jika masih belum ada, cek apakah pushName pengirim persis sama dengan username peserta TikTok
+  if (!finalTag && pushName) {
+    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+    const realParticipants = getRealParticipants();
+    const matchedP = realParticipants.find(p => p.username.toLowerCase() === cleanPush);
+    if (matchedP) {
+      finalTag = matchedP.username;
+    }
+  }
+
+  // 3. Cek apakah pushName mengandung username peserta giveaway (misal: "Sayang 💕 (@ilvy0uv)")
+  if (!finalTag && pushName) {
+    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+    const realParticipants = getRealParticipants();
+    const matchedP = realParticipants.find(p => p.username.length >= 3 && cleanPush.includes(p.username.toLowerCase()));
+    if (matchedP) {
+      finalTag = matchedP.username;
     }
   }
 
@@ -599,18 +635,28 @@ export function checkUserInWaGroup(username: string): { found: boolean; memberTa
   const targetGroup = getTargetWaGroup();
   const allMembers = getWaGroupMembers(targetGroup || undefined);
 
-  // 1. Check by member_tag
+  // 1. Cocokkan tepat berdasarkan member_tag
   let match = allMembers.find(m => {
     const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
     return tag === cleanUser;
   });
 
-  // 2. Fallback check by push_name or phone
+  // 2. Cocokkan tepat berdasarkan push_name atau nomor telepon
   if (!match) {
     match = allMembers.find(m => {
       const pName = (m.push_name || '').replace(/^@/, '').trim().toLowerCase();
       const ph = (m.phone || '').trim().toLowerCase();
       return pName === cleanUser || ph === cleanUser;
+    });
+  }
+
+  // 3. Fallback pencocokan parsial / substring (misal di WA: "ilvy0uv (Sayang 💕)" atau sebaliknya)
+  if (!match && cleanUser.length >= 3) {
+    match = allMembers.find(m => {
+      const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+      const pName = (m.push_name || '').replace(/^@/, '').trim().toLowerCase();
+      return (tag && (tag.includes(cleanUser) || cleanUser.includes(tag))) ||
+             (pName && (pName.includes(cleanUser) || cleanUser.includes(pName)));
     });
   }
 
@@ -636,7 +682,9 @@ function computeEligibility(username: string) {
 
   if (!participant) return;
 
-  const eligible = participant.has_wa_group ? 1 : 0;
+  const isMandatory = isWaRequirementMandatory();
+  // Jika syarat WA wajib: peserta WAJIB masuk grup & absen. Jika opsional: langsung eligible!
+  const eligible = isMandatory ? (participant.has_wa_group ? 1 : 0) : 1;
   participant.is_eligible = eligible;
   participant.last_updated = new Date().toISOString();
   memoryParticipants.set(username, participant);

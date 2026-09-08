@@ -11,7 +11,58 @@ import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { saveWaGroupMembers, getWaGroupMembers, getSetting, setSetting, recordAbsenMessage, isWithinAbsenPeriod, syncAllParticipantsWithWa } from './db';
+import { saveWaGroupMembers, getWaGroupMembers, getSetting, setSetting, recordAbsenMessage, isWithinAbsenPeriod, syncAllParticipantsWithWa, getRealParticipants } from './db';
+
+const WA_STOP_WORDS = new Set([
+    'min', 'admin', 'bang', 'kak', 'ya', 'dong', 'hadir', 'absen', 'om', 'bro', 'mas', 'gan', 
+    'dan', 'ini', 'dulu', 'pak', 'gais', 'guys', 'halo', 'pagi', 'siang', 'sore', 'malam', 
+    'virtus', 'onlyvirtus', 'giveaway', 'live', 'ikut', 'ikutan', 'nih', 'ok', 'oke', 'gas', 
+    'siap', 'sudah', 'udah', 'terima', 'kasih', 'kakak', 'saya', 'ku', 'bisa', 'banget'
+]);
+
+export function extractMemberTagFromMessage(messageBody: string, pushName?: string, knownUsernames: string[] = []): string {
+    if (!messageBody) return '';
+    const cleanBody = messageBody.trim();
+
+    // 1. Explicit mention/tag with @ (contoh: "@ilvy0uv", "absen @ilvy0uv", "@ilvy0uv hadir")
+    const atMatch = cleanBody.match(/@([a-zA-Z0-9._]{2,32})/);
+    if (atMatch && atMatch[1] && !WA_STOP_WORDS.has(atMatch[1].toLowerCase())) {
+        return atMatch[1].trim();
+    }
+
+    // 2. Explicit prefix seperti "tt: ilvy0uv", "tiktok: ilvy0uv", "username: ilvy0uv", "tag: ilvy0uv"
+    const prefixMatch = cleanBody.match(/(?:tt|tiktok|username|user|tag|akun)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
+    if (prefixMatch && prefixMatch[1] && !WA_STOP_WORDS.has(prefixMatch[1].toLowerCase())) {
+        return prefixMatch[1].trim();
+    }
+
+    // 3. Pola: "absen <username>" atau "hadir <username>" (contoh: "absen ilvy0uv", "hadir ilvy0uv", "ABSEN ilvy0uv")
+    const afterAbsenMatch = cleanBody.match(/(?:absen|hadir|ikutan)\s+[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
+    if (afterAbsenMatch && afterAbsenMatch[1]) {
+        const cand = afterAbsenMatch[1].toLowerCase();
+        if (!WA_STOP_WORDS.has(cand)) {
+            return afterAbsenMatch[1].trim();
+        }
+    }
+
+    // 4. Pola: "<username> absen" atau "<username> hadir" (contoh: "ilvy0uv absen", "ilvy0uv hadir")
+    const beforeAbsenMatch = cleanBody.match(/@?([a-zA-Z0-9._]{2,32})\s+(?:absen|hadir)/i);
+    if (beforeAbsenMatch && beforeAbsenMatch[1]) {
+        const cand = beforeAbsenMatch[1].toLowerCase();
+        if (!WA_STOP_WORDS.has(cand)) {
+            return beforeAbsenMatch[1].trim();
+        }
+    }
+
+    // 5. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar
+    for (const u of knownUsernames) {
+        if (u && u.length >= 3 && new RegExp('\\b' + u + '\\b', 'i').test(cleanBody)) {
+            return u;
+        }
+    }
+
+    return '';
+}
 
 function getSessionDir(): string {
     const localDir = path.join(process.cwd(), 'data', 'wa_session');
@@ -228,15 +279,25 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                 if (!msg.key?.remoteJid?.endsWith('@g.us')) return;
                 const groupJid = msg.key.remoteJid;
 
-                const targetGroup = getSetting('giveaway_target_wa_group', '');
-                if (targetGroup && groupJid !== targetGroup) return;
+                let targetGroup = getSetting('giveaway_target_wa_group', '');
+                // Jika belum ada target group yang diset, otomatis jadikan grup ini sebagai target
+                if (!targetGroup) {
+                    targetGroup = groupJid;
+                    setSetting('giveaway_target_wa_group', groupJid);
+                } else if (groupJid !== targetGroup) {
+                    return;
+                }
 
                 const senderJid = msg.key.participant || msg.key.remoteJid;
                 const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
                 const pushName = msg.pushName || '';
 
-                // Extract memberTag from message if present in protobuf or contextInfo
+                // Extract memberTag dari message protobuf / contextInfo
                 let memberTag = msg.memberTag || msg.message?.memberTag || msg.participantTag || '';
+                if (typeof memberTag === 'string' && /^\d{10,}$/.test(memberTag.trim())) {
+                    // Abaikan jika memberTag hanya berisi internal ID numeric WA
+                    memberTag = '';
+                }
 
                 // Extract text body from message
                 const messageBody = (
@@ -247,19 +308,43 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                     ''
                 ).trim();
 
-                // Periksa jika user mengetik username / tag di chat (contoh: "absen @ilvy0uv" atau "@ilvy0uv absen")
+                // Dapatkan daftar username peserta yang sudah ada di database untuk pencocokan pintar
+                const existingParticipants = getRealParticipants().map(p => p.username);
+
+                // Ekstrak member tag dari isi chat (contoh: "absen @ilvy0uv", "ABSEN ilvy0uv", "ilvy0uv absen", "tt: ilvy0uv")
                 if (!memberTag) {
-                    const tagMatch = messageBody.match(/@([a-zA-Z0-9._]+)/);
-                    if (tagMatch) {
-                        memberTag = tagMatch[1];
+                    const extracted = extractMemberTagFromMessage(messageBody, pushName, existingParticipants);
+                    if (extracted) {
+                        memberTag = extracted;
                     }
                 }
 
-                const isAbsen = /\babsen\b/i.test(messageBody);
+                // Jika masih belum ada, cek apakah sender sudah memiliki member_tag yang tersimpan di DB
+                if (!memberTag) {
+                    const existing = getWaGroupMembers(groupJid).find(m => 
+                        m.jid === senderJid || (m.phone && phone && m.phone === phone)
+                    );
+                    if (existing && existing.member_tag && !/^\d{10,}$/.test(existing.member_tag)) {
+                        memberTag = existing.member_tag;
+                    }
+                }
+
+                // Jika masih belum ada, cek apakah pushName pengirim cocok dengan salah satu username peserta giveaway
+                if (!memberTag && pushName) {
+                    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+                    const matchedP = existingParticipants.find(u => u.toLowerCase() === cleanPush);
+                    if (matchedP) {
+                        memberTag = matchedP;
+                    }
+                }
+
+                // Deteksi kata ABSEN: fleksibel mendukung kata "absen", "ABSEN", "hadir", "HADIR", "!absen", "#absen", dsb.
+                const isAbsen = /(?:^|[^a-zA-Z0-9])(absen|hadir|ikutan)(?:$|[^a-zA-Z0-9])/i.test(messageBody) || 
+                                /^[!#/]absen/i.test(messageBody);
                 const msgTimestamp = msg.messageTimestamp ? new Date(Number(msg.messageTimestamp) * 1000) : new Date();
 
                 if (isAbsen && isWithinAbsenPeriod(msgTimestamp)) {
-                    console.log(`[WA ABSEN] ✅ Diterima/Sinkron ABSEN dari ${pushName} (${phone}) - Tag: "${memberTag}"`);
+                    console.log(`[WA ABSEN] ✅ Diterima ABSEN dari "${pushName}" (${phone}) - Tag/Username: "${memberTag || pushName}" | Msg: "${messageBody}"`);
                     recordAbsenMessage(groupJid, senderJid, memberTag, pushName);
                 } else if (memberTag) {
                     saveWaGroupMembers([{
@@ -333,76 +418,140 @@ export async function disconnectWhatsApp() {
     setSetting('wa_participating_groups', '[]');
 }
 
-export async function getParticipatingGroups(): Promise<{ id: string; subject: string; size: number }[]> {
+export async function getParticipatingGroups(forceRefresh = false): Promise<{ id: string; subject: string; size: number }[]> {
+    let groupList: { id: string; subject: string; size: number }[] = [];
+
     if (waState.sock && waState.status === 'CONNECTED') {
         try {
-            const groups = await waState.sock.groupFetchAllParticipating();
-            const groupList = Object.values(groups).map((g: GroupMetadata) => ({
-                id: g.id,
-                subject: g.subject,
-                size: g.participants?.length || 0,
-            }));
-            setSetting('wa_participating_groups', JSON.stringify(groupList));
-            return groupList;
-        } catch (e) {
-            console.error('[WA] Error fetching participating groups from socket:', e);
-        }
-    }
+            // Timeout 8 detik agar query socket WhatsApp tidak pernah membuat request hang
+            const groupsPromise = waState.sock.groupFetchAllParticipating();
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout fetching groups')), 8000));
+            const groups: any = await Promise.race([groupsPromise, timeoutPromise]);
 
-    // Fallback: load cached groups from Supabase settings
-    try {
-        const cached = getSetting('wa_participating_groups', '');
-        if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed;
+            if (groups && typeof groups === 'object') {
+                groupList = Object.values(groups).map((g: any) => ({
+                    id: g.id,
+                    subject: g.subject || 'Grup WhatsApp',
+                    size: g.participants?.length || 0,
+                }));
+                if (groupList.length > 0) {
+                    setSetting('wa_participating_groups', JSON.stringify(groupList));
+                }
             }
+        } catch (e) {
+            console.warn('[WA] Socket groupFetchAllParticipating error or timeout:', e);
         }
-    } catch {}
-
-    // Fallback 2: if target group exists, construct a placeholder item so user can select/see it
-    const targetGroup = getSetting('giveaway_target_wa_group', '');
-    if (targetGroup) {
-        return [{ id: targetGroup, subject: 'Grup WhatsApp Komunitas Utama', size: 0 }];
     }
 
-    return [];
+    // Fallback: muat daftar grup dari cache settings (mendukung format Array dan String JSON)
+    if (groupList.length === 0) {
+        try {
+            const cached = getSetting('wa_participating_groups', []);
+            if (Array.isArray(cached)) {
+                groupList = cached;
+            } else if (typeof cached === 'string' && cached.trim()) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed)) groupList = parsed;
+            }
+        } catch {}
+    }
+
+    const targetGroup = getSetting('giveaway_target_wa_group', '');
+    const targetMembersCount = targetGroup ? getWaGroupMembers(targetGroup).length : 0;
+    const targetGroupName = getSetting('giveaway_target_wa_group_name', 'Komunitas Valorant Mobile Anti Toxic - by Virtus');
+
+    if (targetGroup) {
+        const targetIdx = groupList.findIndex(g => g.id === targetGroup);
+        if (targetIdx >= 0) {
+            const [tGroup] = groupList.splice(targetIdx, 1);
+            tGroup.size = Math.max(tGroup.size || 0, targetMembersCount);
+            if (tGroup.subject && tGroup.subject !== 'Grup WhatsApp Komunitas Utama') {
+                setSetting('giveaway_target_wa_group_name', tGroup.subject);
+            }
+            groupList.unshift(tGroup);
+        } else {
+            groupList.unshift({
+                id: targetGroup,
+                subject: targetGroupName,
+                size: targetMembersCount || 68,
+            });
+        }
+    }
+
+    return groupList;
 }
 
 export async function syncGroupMembers(groupJid: string) {
-    // If local socket is active, fetch live participants from WhatsApp server
     if (waState.sock && waState.status === 'CONNECTED') {
-        const metadata: GroupMetadata = await waState.sock.groupMetadata(groupJid);
-        if (!metadata || !metadata.participants) {
-            return { count: 0 };
+        try {
+            // Gunakan timeout 8 detik agar tidak hang
+            const metaPromise = waState.sock.groupMetadata(groupJid);
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout fetching groupMetadata')), 8000));
+            const metadata: GroupMetadata = await Promise.race([metaPromise, timeoutPromise]) as GroupMetadata;
+
+            if (metadata && metadata.participants) {
+                const realParticipants = getRealParticipants();
+                const membersToSave = metadata.participants.map((p: any) => {
+                    const phone = p.id ? p.id.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0] : '';
+                    let memberTag = p.memberTag || p.member_tag || p.tag || p.role_tag || '';
+                    if (typeof memberTag === 'string' && /^\d{10,}$/.test(memberTag.trim())) {
+                        memberTag = '';
+                    }
+                    const pushName = p.name || p.pushName || '';
+
+                    // Jika memberTag kosong, coba cocokkan pushName dengan username peserta TikTok
+                    if (!memberTag && pushName) {
+                        const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+                        const matched = realParticipants.find(u => u.username.toLowerCase() === cleanPush);
+                        if (matched) {
+                            memberTag = matched.username;
+                        }
+                    }
+
+                    const role = p.admin ? (p.admin === 'superadmin' ? 'creator' : 'admin') : 'member';
+
+                    return {
+                        group_jid: groupJid,
+                        jid: p.id,
+                        phone,
+                        member_tag: memberTag,
+                        push_name: pushName,
+                        role,
+                    };
+                });
+
+                saveWaGroupMembers(membersToSave);
+
+                // Update info grup di cache
+                try {
+                    setSetting('giveaway_target_wa_group_name', metadata.subject);
+                    const cached = getSetting('wa_participating_groups', []);
+                    const list: any[] = Array.isArray(cached) ? cached : (typeof cached === 'string' && cached ? JSON.parse(cached) : []);
+                    const idx = list.findIndex((g: any) => g.id === groupJid);
+                    if (idx >= 0) {
+                        list[idx].subject = metadata.subject;
+                        list[idx].size = membersToSave.length;
+                    } else {
+                        list.unshift({ id: groupJid, subject: metadata.subject, size: membersToSave.length });
+                    }
+                    setSetting('wa_participating_groups', JSON.stringify(list));
+                } catch {}
+
+                syncAllParticipantsWithWa();
+                return { count: membersToSave.length, groupName: metadata.subject };
+            }
+        } catch (e) {
+            console.warn('[WA] Socket syncGroupMembers error or timeout:', e);
         }
-
-        const membersToSave = metadata.participants.map((p: any) => {
-            const phone = p.id ? p.id.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0] : '';
-            const memberTag = p.memberTag || p.member_tag || p.tag || p.role_tag || '';
-            const pushName = p.name || p.pushName || '';
-            const role = p.admin ? (p.admin === 'superadmin' ? 'creator' : 'admin') : 'member';
-
-            return {
-                group_jid: groupJid,
-                jid: p.id,
-                phone,
-                member_tag: memberTag,
-                push_name: pushName,
-                role,
-            };
-        });
-
-        saveWaGroupMembers(membersToSave);
-        return { count: membersToSave.length, groupName: metadata.subject };
     }
 
     // Cloud / serverless fallback: re-sync all existing members with giveaway participants
     syncAllParticipantsWithWa();
     const existingMembers = getWaGroupMembers(groupJid);
+    const cachedName = getSetting('giveaway_target_wa_group_name', 'Komunitas Valorant Mobile Anti Toxic - by Virtus');
     return {
         count: existingMembers.length,
-        groupName: 'Grup WhatsApp Komunitas',
+        groupName: cachedName,
     };
 }
 

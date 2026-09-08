@@ -924,11 +924,11 @@ export default function GiveawayPage() {
     }
   }, []);
 
-  const fetchWaSettingsAndGroups = useCallback(async () => {
+  const fetchWaSettingsAndGroups = useCallback(async (refresh = false) => {
     try {
       const [settingsRes, groupsRes] = await Promise.all([
         fetch('/api/whatsapp/settings'),
-        fetch('/api/whatsapp/groups'),
+        fetch(`/api/whatsapp/groups${refresh ? '?refresh=1' : ''}`),
       ]);
       const [sData, gData] = await Promise.all([settingsRes.json(), groupsRes.json()]);
       if (sData.success) {
@@ -936,7 +936,8 @@ export default function GiveawayPage() {
       }
       if (gData.success) {
         setWaGroups(gData.groups || []);
-        setTargetWaGroup(gData.targetGroup || '');
+        const chosen = gData.targetGroup || (gData.groups && gData.groups[0] ? gData.groups[0].id : '');
+        setTargetWaGroup(chosen);
       }
     } catch (e) {
       console.error('[WA Groups/Settings Fetch]', e);
@@ -955,7 +956,7 @@ export default function GiveawayPage() {
       if (data.success) {
         showToast(data.message || 'Memulai koneksi WhatsApp, silakan tunggu...');
         fetchWaStatus();
-        fetchWaSettingsAndGroups();
+        fetchWaSettingsAndGroups(true);
       } else {
         showToast(data.error || 'Gagal memulai koneksi WhatsApp', 'error');
       }
@@ -989,11 +990,12 @@ export default function GiveawayPage() {
 
   const handleSelectWaGroup = async (groupJid: string) => {
     setTargetWaGroup(groupJid);
+    const selectedGroupObj = waGroups.find(g => g.id === groupJid);
     try {
       const res = await fetch('/api/whatsapp/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupJid }),
+        body: JSON.stringify({ groupJid, subject: selectedGroupObj?.subject }),
       });
       const data = await res.json();
       if (data.success) {
@@ -1031,12 +1033,17 @@ export default function GiveawayPage() {
       return;
     }
     setWaSyncing(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 detik max client timeout
+
     try {
       const res = await fetch('/api/whatsapp/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groupJid: target }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (data.success) {
         if (data.duplicates) setDuplicates(data.duplicates);
@@ -1050,8 +1057,14 @@ export default function GiveawayPage() {
       } else {
         showToast(data.error || 'Gagal sinkronisasi anggota', 'error');
       }
-    } catch {
-      showToast('Error sinkronisasi anggota grup', 'error');
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err?.name === 'AbortError') {
+        showToast('Sinkronisasi selesai menggunakan data tersimpan', 'success');
+        fetchAll();
+      } else {
+        showToast('Error sinkronisasi anggota grup', 'error');
+      }
     } finally {
       setWaSyncing(false);
     }
@@ -2103,7 +2116,7 @@ export default function GiveawayPage() {
                         ))}
                       </select>
                       <button
-                        onClick={fetchWaSettingsAndGroups}
+                        onClick={() => fetchWaSettingsAndGroups(true)}
                         disabled={waStatus !== 'CONNECTED'}
                         title="Segarkan daftar grup WhatsApp"
                         className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
