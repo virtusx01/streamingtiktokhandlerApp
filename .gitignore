@@ -62,6 +62,8 @@ driver-apk/**/build/
 data/wa_session/
 data/*.db
 data/*.db-journal
+data/*.sqlite
+data/*.sqlite-journal
 data/*.bak
 .gemini/
 supabase/.temp/

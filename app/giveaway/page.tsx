@@ -919,6 +919,13 @@ export default function GiveawayPage() {
   const [waAllMembers, setWaAllMembers]   = useState<WaMember[]>([]);
   const [searchWaMembers, setSearchWaMembers] = useState<string>('');
 
+  // WhatsApp Chat Import States
+  const [importChatText, setImportChatText]         = useState<string>('');
+  const [importFileName, setImportFileName]         = useState<string>('');
+  const [importLoading, setImportLoading]           = useState<boolean>(false);
+  const [importResult, setImportResult]             = useState<any | null>(null);
+  const [showImportPasteArea, setShowImportPasteArea] = useState<boolean>(false);
+
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3200);
@@ -1116,6 +1123,50 @@ export default function GiveawayPage() {
     } finally {
       setManualWaLoading(false);
     }
+  };
+
+  const handleImportChat = async () => {
+    if (!importChatText.trim()) {
+      showToast('Pilih file .txt atau tempel riwayat chat terlebih dahulu', 'error');
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const res = await fetch('/api/whatsapp/import-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatText: importChatText,
+          targetGroup: targetWaGroup || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setImportResult(data);
+        showToast(`✅ ${data.message}`);
+        fetchAll();
+      } else {
+        showToast(data.error || 'Gagal memproses import chat', 'error');
+      }
+    } catch (e: any) {
+      showToast('Error memproses import chat: ' + (e?.message || e), 'error');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        setImportChatText(content);
+      }
+    };
+    reader.readAsText(file);
   };
 
   const fetchConfig = useCallback(async () => {
@@ -2005,7 +2056,8 @@ export default function GiveawayPage() {
 
         {/* ══════════════ WHATSAPP BOT TAB ══════════════ */}
         {activeTab === 'whatsapp' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Panel 1: Status & Scan QR */}
             <div className="rounded-3xl p-6"
               style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)' }}>
@@ -2241,7 +2293,7 @@ export default function GiveawayPage() {
                                     )}
                                   </td>
                                   <td className="py-2 px-3 font-mono text-gray-400">
-                                    {m.phone ? `+${m.phone}` : '-'}
+                                    {m.phone ? (m.phone.startsWith('+') ? m.phone : `+${m.phone}`) : '-'}
                                   </td>
                                   <td className="py-2 px-3">
                                     {tag ? (
@@ -2327,6 +2379,274 @@ export default function GiveawayPage() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+
+            {/* Panel 3: Import Chat WhatsApp (.txt) - Deteksi ABSEN & Member Tag */}
+            <div
+              className="rounded-3xl p-6 transition-all"
+              style={{
+                background: 'rgba(14, 165, 233, 0.04)',
+                border: '1px solid rgba(14, 165, 233, 0.22)',
+              }}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-300 flex items-center justify-center text-xl flex-shrink-0">
+                    📥
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-sky-300 flex items-center gap-2">
+                      <span>Import Chat WhatsApp (.txt)</span>
+                      <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-200 border border-sky-500/30">
+                        Deteksi Absen &amp; Tag Otomatis
+                      </span>
+                    </h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Ekspor chat dari WhatsApp HP berupa file <strong className="text-white">.txt</strong>, lalu import di sini. Sistem akan otomatis mendeteksi siapa yang sudah ketik <strong className="text-emerald-300">ABSEN</strong>, mencocokkan nomor / nama kontak ke grup, dan memverifikasi <strong className="text-sky-300">Member Tag (Username TikTok)</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowImportPasteArea(!showImportPasteArea)}
+                  className="text-xs px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <span>{showImportPasteArea ? '📂 Mode Upload File' : '✍️ Tempel Teks Manual'}</span>
+                </button>
+              </div>
+
+              {/* Format Guide Box */}
+              <div className="p-3 mb-4 rounded-xl bg-black/40 border border-white/10 text-xs text-gray-400 font-mono">
+                <div className="text-[11px] text-sky-400 font-sans font-bold mb-1">
+                  💡 Format chat WhatsApp yang didukung:
+                </div>
+                <div className="text-[11px] text-gray-300 space-y-0.5">
+                  <div>9/8/26, 4:36 PM - +62 878-0576-2442: ABSEN</div>
+                  <div>9/8/26, 4:36 PM - Kirei: ABSEN</div>
+                  <div>9/8/26, 4:37 PM - Keony: ABSEN @hykeoony</div>
+                </div>
+                <div className="text-[10px] text-gray-500 font-sans mt-1">
+                  * Nama kontak (seperti <em>Kirei</em>) ataupun nomor telepon langsung dideteksi &amp; dicocokkan ke anggota grup.
+                </div>
+              </div>
+
+              {/* Upload Dropzone OR Manual Textarea */}
+              {!showImportPasteArea ? (
+                <div className="mb-4">
+                  <label
+                    htmlFor="wa-chat-file-upload"
+                    className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all ${
+                      importFileName
+                        ? 'border-emerald-500/50 bg-emerald-500/5'
+                        : 'border-sky-500/30 hover:border-sky-500/60 bg-sky-500/5 hover:bg-sky-500/10'
+                    }`}
+                  >
+                    <input
+                      id="wa-chat-file-upload"
+                      type="file"
+                      accept=".txt,text/plain"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    <div className="text-3xl mb-2">{importFileName ? '📄' : '📁'}</div>
+                    {importFileName ? (
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-emerald-300">File Terpilih: {importFileName}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {importChatText.split('\n').length} baris terbaca • Klik untuk mengganti file
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-gray-200">
+                          Klik untuk memilih file <span className="text-sky-300">.txt</span> export chat WhatsApp
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          WhatsApp &rarr; Obrolan Grup &rarr; Lainnya &rarr; Ekspor Chat (Tanpa Media)
+                        </p>
+                      </div>
+                    )}
+                  </label>
+                </div>
+              ) : (
+                <div className="mb-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span>Tempel isi chat WhatsApp di bawah ini:</span>
+                    <span>{importChatText ? `${importChatText.split('\n').length} baris` : '0 baris'}</span>
+                  </div>
+                  <textarea
+                    rows={6}
+                    placeholder="9/8/26, 4:36 PM - +62 878-0576-2442: ABSEN&#10;9/8/26, 4:36 PM - Kirei: ABSEN"
+                    value={importChatText}
+                    onChange={e => setImportChatText(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl text-xs font-mono bg-black/50 border border-white/10 text-white placeholder-gray-600 focus:outline-none focus:border-sky-500 transition-colors"
+                  />
+                </div>
+              )}
+
+              {/* Action Button */}
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  onClick={handleImportChat}
+                  disabled={importLoading || !importChatText.trim()}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2 flex-1 shadow-lg shadow-sky-900/20 cursor-pointer"
+                  style={{ background: 'linear-gradient(135deg, #0284C7, #0369A1)' }}
+                >
+                  <span>{importLoading ? '⏳' : '⚡'}</span>
+                  <span>{importLoading ? 'Menganalisis Riwayat Chat…' : 'Analisis Chat & Sinkronkan Absen Sekarang'}</span>
+                </button>
+
+                {importChatText && (
+                  <button
+                    onClick={() => {
+                      setImportChatText('');
+                      setImportFileName('');
+                      setImportResult(null);
+                    }}
+                    className="px-4 py-3 rounded-xl text-xs font-bold text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {/* Results Display */}
+              {importResult && (
+                <div className="mt-6 pt-6 border-t border-white/10 space-y-4">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
+                      <p className="text-[11px] text-gray-400 font-semibold uppercase">Total Pesan</p>
+                      <p className="text-xl font-bold text-white mt-1">{importResult.totalMessages}</p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                      <p className="text-[11px] text-emerald-300 font-semibold uppercase">Absen Terdeteksi</p>
+                      <p className="text-xl font-bold text-emerald-400 mt-1">{importResult.totalAbsenDetected}</p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
+                      <p className="text-[11px] text-blue-300 font-semibold uppercase">Cocok dg Grup</p>
+                      <p className="text-xl font-bold text-blue-400 mt-1">{importResult.matchedWithGroupCount}</p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/20 text-center">
+                      <p className="text-[11px] text-teal-300 font-semibold uppercase">TikTok Valid (Peserta)</p>
+                      <p className="text-xl font-bold text-teal-300 mt-1">{importResult.newlyVerifiedCount}</p>
+                    </div>
+                  </div>
+
+                  {/* Summary Banner */}
+                  <div className="p-3.5 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-200 text-xs flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-sky-100">{importResult.message}</p>
+                      {importResult.missingTagCount > 0 && (
+                        <p className="text-[11px] text-yellow-300/90 mt-1">
+                          ⚠️ Perhatian: Ada {importResult.missingTagCount} kontak yang sudah ABSEN tetapi Member Tag (Username TikTok)-nya belum terisi. Klik tombol &quot;Isi Tag&quot; di tabel bawah untuk melengkapinya.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Table of Processed Absen Items */}
+                  {importResult.results && importResult.results.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">
+                          📋 Rincian Pengirim yang Terdeteksi ABSEN ({importResult.results.length})
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto rounded-xl max-h-80 overflow-y-auto" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-gray-900 border-b border-white/10 text-[11px] uppercase tracking-wide">
+                            <tr>
+                              <th className="text-left py-2.5 px-3 text-gray-400">#</th>
+                              <th className="text-left py-2.5 px-3 text-white">Pengirim Chat</th>
+                              <th className="text-left py-2.5 px-3 text-gray-400">Nomor WA</th>
+                              <th className="text-left py-2.5 px-3 text-sky-300">Member Tag (TikTok)</th>
+                              <th className="text-left py-2.5 px-3 text-gray-400">Status Tag</th>
+                              <th className="text-left py-2.5 px-3 text-gray-400">Isi Chat</th>
+                              <th className="text-center py-2.5 px-3 text-gray-400">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {importResult.results.map((item: any, idx: number) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                <td className="py-2.5 px-3 text-gray-500">{idx + 1}</td>
+                                <td className="py-2.5 px-3 font-semibold text-white">
+                                  {item.sender}
+                                  {item.senderType === 'contact_name' && (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-normal bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                      Kontak
+                                    </span>
+                                  )}
+                                  {item.senderType === 'phone' && (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-normal bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                      Nomor
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-gray-400">
+                                  {item.phone || '-'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {item.memberTag ? (
+                                    <a
+                                      href={`https://www.tiktok.com/@${item.memberTag}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`font-mono font-semibold hover:underline ${
+                                        item.isValidTag ? 'text-emerald-300' : 'text-red-400'
+                                      }`}
+                                    >
+                                      @{item.memberTag}
+                                    </a>
+                                  ) : (
+                                    <span className="text-yellow-400/80 italic">Belum ada tag</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {item.status === 'VERIFIED' ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                      ✓ Valid (Masuk Giveaway)
+                                    </span>
+                                  ) : item.status === 'INVALID_TAG' ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/30" title="Username mengandung huruf besar atau spasi">
+                                      ✗ Tag Tidak Valid
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                                      ⚠️ Butuh Tag TikTok
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-gray-400 max-w-[160px] truncate" title={item.messageText}>
+                                  {item.messageText}
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  {item.status !== 'VERIFIED' ? (
+                                    <button
+                                      onClick={() => {
+                                        setManualWaTag(item.memberTag || (item.senderType === 'contact_name' ? item.sender.toLowerCase().replace(/[^a-z0-9._]/g, '') : ''));
+                                        setManualWaNick(item.sender);
+                                        setManualWaPhone(item.phone || (item.senderType === 'phone' ? item.sender : ''));
+                                        showToast('Data dimasukkan ke form absen manual di bawah');
+                                      }}
+                                      className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 transition-colors cursor-pointer"
+                                    >
+                                      ✏️ Isi Tag
+                                    </button>
+                                  ) : (
+                                    <span className="text-emerald-400 text-xs">✓</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
