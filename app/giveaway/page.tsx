@@ -902,6 +902,7 @@ export default function GiveawayPage() {
   const [waActionLoading, setWaActionLoading] = useState<boolean>(false);
   const [manualWaTag, setManualWaTag]     = useState<string>('');
   const [manualWaNick, setManualWaNick]   = useState<string>('');
+  const [manualWaPhone, setManualWaPhone] = useState<string>('');
   const [manualWaLoading, setManualWaLoading] = useState<boolean>(false);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -1083,6 +1084,7 @@ export default function GiveawayPage() {
         body: JSON.stringify({
           username: manualWaTag.trim(),
           nickname: manualWaNick.trim() || undefined,
+          phone: manualWaPhone.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -1090,6 +1092,7 @@ export default function GiveawayPage() {
         showToast(data.message || 'Peserta WhatsApp berhasil ditambahkan!');
         setManualWaTag('');
         setManualWaNick('');
+        setManualWaPhone('');
         fetchAll();
       } else {
         showToast(data.error || 'Gagal mendaftarkan peserta', 'error');
@@ -1849,7 +1852,7 @@ export default function GiveawayPage() {
                             </div>
                           </td>
                           <td className="py-3 px-3 text-xs text-gray-300">
-                            <div>{p.wa_phone ? `+${p.wa_phone}` : '-'}</div>
+                            <div>{p.wa_phone ? (p.wa_phone.startsWith('+') ? p.wa_phone : `+${p.wa_phone}`) : '-'}</div>
                             <div className="text-[11px] text-gray-500">{p.nickname}</div>
                           </td>
                           <td className="py-3 px-2 text-center">
@@ -2168,19 +2171,26 @@ export default function GiveawayPage() {
                     <span className="text-xs font-bold text-gray-300">Input / Verifikasi Absen Manual</span>
                     <span className="text-[10px] text-gray-500 ml-auto">Bila member chat sebelum bot jalan</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input
                       type="text"
-                      placeholder="Username TikTok (contoh: ilvy0uv)"
+                      placeholder="Username TikTok / Tag (contoh: hykeoony)"
                       value={manualWaTag}
                       onChange={e => setManualWaTag(e.target.value)}
                       className="px-3 py-2 rounded-xl text-xs bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
                     />
                     <input
                       type="text"
-                      placeholder="Nama di WA (contoh: Sayang 💕)"
+                      placeholder="Nama di WA (contoh: Bal)"
                       value={manualWaNick}
                       onChange={e => setManualWaNick(e.target.value)}
+                      className="px-3 py-2 rounded-xl text-xs bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Nomor WA (contoh: +62 895-3521-73090)"
+                      value={manualWaPhone}
+                      onChange={e => setManualWaPhone(e.target.value)}
                       className="px-3 py-2 rounded-xl text-xs bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
                     />
                   </div>

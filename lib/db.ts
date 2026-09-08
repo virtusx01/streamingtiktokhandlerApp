@@ -543,8 +543,11 @@ export function isWithinAbsenPeriod(date: Date = new Date()): boolean {
   }
 }
 
-export function recordAbsenMessage(groupJid: string, senderJid: string, memberTag?: string, pushName?: string) {
-  const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+export function recordAbsenMessage(groupJid: string, senderJid: string, memberTag?: string, pushName?: string, phoneOverride?: string) {
+  let phone = phoneOverride ? phoneOverride.trim() : '';
+  if (!phone) {
+    phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+  }
   const nowIso = new Date().toISOString();
 
   let finalTag = memberTag && memberTag.trim() ? memberTag.trim().replace(/^@/, '') : '';
@@ -561,7 +564,7 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   // 2. Jika masih belum ada, cek apakah pushName pengirim persis sama dengan username peserta TikTok
   if (!finalTag && pushName) {
-    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+    const cleanPush = pushName.replace(/^[@~]/, '').trim().toLowerCase();
     const realParticipants = getRealParticipants();
     const matchedP = realParticipants.find(p => p.username.toLowerCase() === cleanPush);
     if (matchedP) {
@@ -571,7 +574,7 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   // 3. Cek apakah pushName mengandung username peserta giveaway (misal: "Sayang 💕 (@ilvy0uv)")
   if (!finalTag && pushName) {
-    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+    const cleanPush = pushName.replace(/^[@~]/, '').trim().toLowerCase();
     const realParticipants = getRealParticipants();
     const matchedP = realParticipants.find(p => p.username.length >= 3 && cleanPush.includes(p.username.toLowerCase()));
     if (matchedP) {
@@ -579,12 +582,14 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
     }
   }
 
+  const cleanPushName = pushName ? pushName.replace(/^~/, '').trim() : '';
+
   const memberPayload: WaMemberRecord = {
     group_jid: groupJid,
     jid: senderJid,
     phone,
     member_tag: finalTag || '',
-    push_name: pushName || '',
+    push_name: cleanPushName || '',
     role: 'member',
     has_absen: 1,
     absen_at: nowIso,
@@ -593,11 +598,11 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   saveWaGroupMembers([memberPayload]);
 
-  const cleanTag = finalTag ? finalTag.replace(/^@/, '').trim() : (pushName ? pushName.trim() : phone);
-  const displayName = pushName || cleanTag;
+  const cleanTag = finalTag ? finalTag.replace(/^@/, '').trim() : (cleanPushName ? cleanPushName.trim() : phone);
+  const displayName = cleanPushName || cleanTag;
 
   if (cleanTag) {
-    addGiveawayParticipant(cleanTag, displayName, null, 1);
+    addGiveawayParticipant(cleanTag, displayName, null, 1, phone || null, cleanTag);
   }
 
   syncAllParticipantsWithWa();
@@ -605,15 +610,16 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
 export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, phone?: string) {
   const cleanTag = usernameOrTag.replace(/^@/, '').trim();
-  const displayName = nickname?.trim() || cleanTag;
+  const displayName = nickname ? nickname.replace(/^~/, '').trim() : cleanTag;
   const targetGroup = getTargetWaGroup() || '120363409436448923@g.us';
-  const fakeJid = `${cleanTag}@s.whatsapp.net`;
+  const cleanPhone = phone ? phone.replace(/[^0-9+]/g, '').trim() : '';
+  const fakeJid = cleanPhone ? `${cleanPhone.replace(/^\+/, '')}@s.whatsapp.net` : `${cleanTag}@s.whatsapp.net`;
   const nowIso = new Date().toISOString();
 
   const memberPayload: WaMemberRecord = {
     group_jid: targetGroup,
     jid: fakeJid,
-    phone: phone || '',
+    phone: phone ? phone.trim() : cleanPhone,
     member_tag: cleanTag,
     push_name: displayName,
     role: 'member',
@@ -624,9 +630,9 @@ export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, 
 
   saveWaGroupMembers([memberPayload]);
 
-  addGiveawayParticipant(cleanTag, displayName, null, 1);
+  addGiveawayParticipant(cleanTag, displayName, null, 1, phone ? phone.trim() : (cleanPhone || null), cleanTag);
 
-  return { success: true, username: cleanTag, nickname: displayName };
+  return { success: true, username: cleanTag, nickname: displayName, phone: phone || cleanPhone };
 }
 
 export function checkUserInWaGroup(username: string): { found: boolean; memberTag?: string; phone?: string; hasAbsen?: boolean } {
@@ -768,11 +774,13 @@ export function syncAllParticipantsWithWa() {
 
   for (const m of absenMembers) {
     const cleanTag = (m.member_tag || '').replace(/^@/, '').trim();
-    const username = cleanTag || (m.push_name ? m.push_name.trim() : m.phone);
-    const displayName = m.push_name || username;
+    const cleanPush = m.push_name ? m.push_name.replace(/^~/, '').trim() : '';
+    const username = cleanTag || cleanPush || m.phone;
+    const displayName = cleanPush || username;
+    const phone = m.phone || null;
 
     if (username) {
-      addGiveawayParticipant(username, displayName, null, 1);
+      addGiveawayParticipant(username, displayName, null, 1, phone, cleanTag || username);
     }
   }
 
@@ -786,13 +794,18 @@ export function addGiveawayParticipant(
   username: string,
   nickname: string,
   profilePicture?: string | null,
-  forceWaVerified = 0
+  forceWaVerified = 0,
+  waPhoneOverride?: string | null,
+  waMemberTagOverride?: string | null
 ) {
   const waCheck = checkUserInWaGroup(username);
   const isValidWa = forceWaVerified ? 1 : (waCheck.found && waCheck.hasAbsen ? 1 : 0);
   const nowIso = new Date().toISOString();
 
   const existing = memoryParticipants.get(username);
+  const finalPhone = waPhoneOverride || waCheck.phone || existing?.wa_phone || null;
+  const finalMemberTag = waMemberTagOverride || waCheck.memberTag || existing?.wa_member_tag || username;
+
   const payload: GiveawayParticipant = {
     username,
     nickname: nickname || existing?.nickname || username,
@@ -802,8 +815,8 @@ export function addGiveawayParticipant(
     has_shared: 1,
     has_commented: 1,
     has_wa_group: isValidWa,
-    wa_member_tag: waCheck.memberTag || existing?.wa_member_tag || username,
-    wa_phone: waCheck.phone || existing?.wa_phone || null,
+    wa_member_tag: finalMemberTag,
+    wa_phone: finalPhone,
     is_eligible: isValidWa ? 1 : 0,
     is_tester: 0,
     registered_at: existing?.registered_at || nowIso,
@@ -824,7 +837,7 @@ export function addGiveawayParticipant(
           wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
           wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
           last_updated = datetime('now')
-      `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null, payload.is_eligible);
+      `).run(username, nickname, profilePicture || null, isValidWa, finalMemberTag, finalPhone, payload.is_eligible);
     } catch {}
   }
 
@@ -1190,7 +1203,7 @@ export function saveWaGroupMembers(members: WaMemberRecord[]) {
         INSERT INTO wa_group_members (group_jid, jid, phone, member_tag, push_name, role, has_absen, absen_at, last_seen)
         VALUES (@group_jid, @jid, @phone, @member_tag, @push_name, @role, @has_absen, @absen_at, datetime('now'))
         ON CONFLICT(group_jid, jid) DO UPDATE SET
-          phone = excluded.phone,
+          phone = COALESCE(NULLIF(excluded.phone, ''), wa_group_members.phone),
           member_tag = COALESCE(NULLIF(excluded.member_tag, ''), wa_group_members.member_tag),
           push_name = COALESCE(NULLIF(excluded.push_name, ''), wa_group_members.push_name),
           role = COALESCE(NULLIF(excluded.role, ''), wa_group_members.role),

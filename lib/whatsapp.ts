@@ -36,7 +36,22 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
         return prefixMatch[1].trim();
     }
 
-    // 3. Pola: "absen <username>" atau "hadir <username>" (contoh: "absen ilvy0uv", "hadir ilvy0uv", "ABSEN ilvy0uv")
+    // 3. Multi-line format (contoh di WhatsApp: baris 1 "hykeoony", baris 2 "absen")
+    const lines = cleanBody.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+    if (lines.length > 1) {
+        for (const line of lines) {
+            const isAbsenLine = /(?:^|[^a-zA-Z0-9])(absen|hadir|ikutan)(?:$|[^a-zA-Z0-9])/i.test(line);
+            if (!isAbsenLine) {
+                const cleanWord = line.replace(/^[@~]/, '').trim();
+                const wordMatch = cleanWord.match(/^[a-zA-Z0-9._]{2,32}$/);
+                if (wordMatch && !WA_STOP_WORDS.has(wordMatch[0].toLowerCase())) {
+                    return wordMatch[0];
+                }
+            }
+        }
+    }
+
+    // 4. Pola: "absen <username>" atau "hadir <username>" (contoh: "absen ilvy0uv", "hadir ilvy0uv", "ABSEN ilvy0uv")
     const afterAbsenMatch = cleanBody.match(/(?:absen|hadir|ikutan)\s+[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
     if (afterAbsenMatch && afterAbsenMatch[1]) {
         const cand = afterAbsenMatch[1].toLowerCase();
@@ -45,7 +60,7 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
         }
     }
 
-    // 4. Pola: "<username> absen" atau "<username> hadir" (contoh: "ilvy0uv absen", "ilvy0uv hadir")
+    // 5. Pola: "<username> absen" atau "<username> hadir" (contoh: "ilvy0uv absen", "ilvy0uv hadir")
     const beforeAbsenMatch = cleanBody.match(/@?([a-zA-Z0-9._]{2,32})\s+(?:absen|hadir)/i);
     if (beforeAbsenMatch && beforeAbsenMatch[1]) {
         const cand = beforeAbsenMatch[1].toLowerCase();
@@ -54,7 +69,7 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
         }
     }
 
-    // 5. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar
+    // 6. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar
     for (const u of knownUsernames) {
         if (u && u.length >= 3 && new RegExp('\\b' + u + '\\b', 'i').test(cleanBody)) {
             return u;
@@ -289,8 +304,15 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                 }
 
                 const senderJid = msg.key.participant || msg.key.remoteJid;
-                const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
-                const pushName = msg.pushName || '';
+                let phone = '';
+                if (senderJid.endsWith('@s.whatsapp.net')) {
+                    phone = senderJid.replace('@s.whatsapp.net', '').split(':')[0];
+                } else if (msg.key?.participantPn || msg.participantPn) {
+                    phone = (msg.key?.participantPn || msg.participantPn).replace('@s.whatsapp.net', '').split(':')[0];
+                } else {
+                    phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+                }
+                const pushName = msg.pushName ? msg.pushName.replace(/^~/, '').trim() : '';
 
                 // Extract memberTag dari message protobuf / contextInfo
                 let memberTag = msg.memberTag || msg.message?.memberTag || msg.participantTag || '';
@@ -311,7 +333,7 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                 // Dapatkan daftar username peserta yang sudah ada di database untuk pencocokan pintar
                 const existingParticipants = getRealParticipants().map(p => p.username);
 
-                // Ekstrak member tag dari isi chat (contoh: "absen @ilvy0uv", "ABSEN ilvy0uv", "ilvy0uv absen", "tt: ilvy0uv")
+                // Ekstrak member tag dari isi chat (contoh: "absen @ilvy0uv", "ABSEN ilvy0uv", "hykeoony\nabsen", "tt: ilvy0uv")
                 if (!memberTag) {
                     const extracted = extractMemberTagFromMessage(messageBody, pushName, existingParticipants);
                     if (extracted) {
@@ -331,7 +353,7 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
 
                 // Jika masih belum ada, cek apakah pushName pengirim cocok dengan salah satu username peserta giveaway
                 if (!memberTag && pushName) {
-                    const cleanPush = pushName.replace(/^@/, '').trim().toLowerCase();
+                    const cleanPush = pushName.replace(/^[@~]/, '').trim().toLowerCase();
                     const matchedP = existingParticipants.find(u => u.toLowerCase() === cleanPush);
                     if (matchedP) {
                         memberTag = matchedP;
@@ -345,7 +367,7 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
 
                 if (isAbsen && isWithinAbsenPeriod(msgTimestamp)) {
                     console.log(`[WA ABSEN] ✅ Diterima ABSEN dari "${pushName}" (${phone}) - Tag/Username: "${memberTag || pushName}" | Msg: "${messageBody}"`);
-                    recordAbsenMessage(groupJid, senderJid, memberTag, pushName);
+                    recordAbsenMessage(groupJid, senderJid, memberTag, pushName, phone);
                 } else if (memberTag) {
                     saveWaGroupMembers([{
                         group_jid: groupJid,
