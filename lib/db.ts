@@ -594,7 +594,8 @@ export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, 
 }
 
 export function checkUserInWaGroup(username: string): { found: boolean; memberTag?: string; phone?: string; hasAbsen?: boolean } {
-  const cleanUser = username.replace(/^@/, '').trim().toLowerCase();
+  const cleanUser = (username || '').replace(/^@/, '').trim().toLowerCase();
+  if (!cleanUser) return { found: false };
   const targetGroup = getTargetWaGroup();
   const allMembers = getWaGroupMembers(targetGroup || undefined);
 

@@ -729,8 +729,9 @@ function WinnerModal({
   if (!winner) return null;
 
   const isTest = !!winner.is_tester;
-  const displayName = winner.nickname || winner.username;
-  const tiktokUrl = `https://www.tiktok.com/@${winner.username.replace(/^@/, '')}`;
+  const displayName = winner.nickname || winner.username || 'Pemenang';
+  const cleanUsername = (winner.username || '').replace(/^@/, '');
+  const tiktokUrl = `https://www.tiktok.com/@${cleanUsername}`;
 
   return (
     <div
@@ -804,7 +805,7 @@ function WinnerModal({
               className="text-base text-gray-300 hover:text-cyan-400 font-medium transition-colors inline-flex items-center gap-1.5 group cursor-pointer"
               title="Buka profil TikTok pemenang di tab baru"
             >
-              <span className="group-hover:underline">@{winner.username.replace(/^@/, '')}</span>
+              <span className="group-hover:underline">@{cleanUsername}</span>
               <span className="text-xs text-gray-400 group-hover:text-cyan-400">↗</span>
             </a>
 
@@ -818,7 +819,7 @@ function WinnerModal({
                 boxShadow: '0 0 16px rgba(0, 242, 254, 0.4)',
               }}
             >
-              <span>🔍 Verifikasi Profil TikTok (@{winner.username.replace(/^@/, '')})</span>
+              <span>🔍 Verifikasi Profil TikTok (@{cleanUsername})</span>
               <span className="text-sm">↗</span>
             </a>
           </div>
@@ -1282,13 +1283,19 @@ export default function GiveawayPage() {
     return `${seconds} dtk`;
   };
 
-  const filteredReal = realParticipants.filter(p => {
-    const q = searchReal.toLowerCase();
-    return p.nickname.toLowerCase().includes(q) || p.username.toLowerCase().includes(q);
+  const filteredReal = (realParticipants || []).filter(p => {
+    if (!p) return false;
+    const q = (searchReal || '').toLowerCase();
+    const nick = (p.nickname || '').toLowerCase();
+    const user = (p.username || '').toLowerCase();
+    return nick.includes(q) || user.includes(q);
   });
-  const filteredTesters = testerParticipants.filter(p => {
-    const q = searchTester.toLowerCase();
-    return p.nickname.toLowerCase().includes(q) || p.username.toLowerCase().includes(q);
+  const filteredTesters = (testerParticipants || []).filter(p => {
+    if (!p) return false;
+    const q = (searchTester || '').toLowerCase();
+    const nick = (p.nickname || '').toLowerCase();
+    const user = (p.username || '').toLowerCase();
+    return nick.includes(q) || user.includes(q);
   });
 
   const wheelPool = wheelMode === 'tester' ? eligibleTesters : eligibleReal;
@@ -1345,7 +1352,15 @@ export default function GiveawayPage() {
         winner={winner}
         onClose={() => setWinner(null)}
         onRemove={handleRemoveWinner}
-        isDuplicate={!!(winner && duplicates.some(d => d.member_tag.toLowerCase() === winner.username.toLowerCase().replace(/^@/, '')))}
+        isDuplicate={Boolean(
+          winner &&
+          duplicates &&
+          duplicates.some(d => {
+            const dTag = (d?.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+            const wUser = (winner.username || '').replace(/^@/, '').trim().toLowerCase();
+            return dTag === wUser;
+          })
+        )}
       />
 
       {/* ── Big Wheel Modal (Pop-up Layar Penuh Fokus Roda Saja) ── */}
@@ -1761,18 +1776,23 @@ export default function GiveawayPage() {
                   </thead>
                   <tbody>
                     {filteredReal.map((p, i) => {
-                      const isDup = duplicates.some(
-                        d => d.member_tag.toLowerCase() === p.username.toLowerCase().replace(/^@/, '')
+                      const cleanUser = (p?.username || '').replace(/^@/, '');
+                      const isDup = Boolean(
+                        duplicates &&
+                        duplicates.some(d => {
+                          const dTag = (d?.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+                          const pUser = cleanUser.trim().toLowerCase();
+                          return dTag === pUser;
+                        })
                       );
-                      const cleanUser = p.username.replace(/^@/, '');
                       return (
-                        <tr key={p.username} className={`border-b border-white/5 transition-colors ${isDup ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-white/5'}`}
+                        <tr key={p.username || i} className={`border-b border-white/5 transition-colors ${isDup ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-white/5'}`}
                           style={{ animation: `fadeUp ${0.1 + i * 0.025}s ease` }}>
                           <td className="py-3 px-3">
                             <div className="flex items-center gap-2.5">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
                                 style={{ background: `linear-gradient(135deg, ${COLORS[i % COLORS.length]}, ${COLORS[(i + 2) % COLORS.length]})` }}>
-                                {(p.nickname || p.username || "?")[0]?.toUpperCase() || "?"}
+                                {((p?.nickname || p?.username || "?")[0] || "?").toUpperCase()}
                               </div>
                               <div className="min-w-0">
                                 <a
@@ -1782,7 +1802,7 @@ export default function GiveawayPage() {
                                   className="font-medium truncate max-w-[160px] text-white hover:text-cyan-300 hover:underline flex items-center gap-1 group"
                                   title={`Buka profil TikTok @${cleanUser}`}
                                 >
-                                  <span>{p.nickname}</span>
+                                  <span>{p?.nickname || cleanUser}</span>
                                   <span className="text-[10px] text-gray-400 group-hover:text-cyan-300">↗</span>
                                 </a>
                                 <a
@@ -1806,7 +1826,7 @@ export default function GiveawayPage() {
                                 <BadgeCheck ok={!!p.has_wa_group} />
                               </button>
                               <span className="font-mono text-xs font-semibold text-emerald-300">
-                                {p.wa_member_tag ? `@${p.wa_member_tag.replace(/^@/, '')}` : `@${cleanUser}`}
+                                {p.wa_member_tag ? `@${(p.wa_member_tag || '').replace(/^@/, '')}` : `@${cleanUser}`}
                               </span>
                               {isDup && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
