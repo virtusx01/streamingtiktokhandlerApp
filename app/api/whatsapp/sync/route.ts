@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { syncGroupMembers } from '@/lib/whatsapp';
-import { getTargetWaGroup, getWaGroupMembers, getEligibleRealParticipants, getDuplicateUsernames } from '@/lib/db';
+import { getTargetWaGroup, getWaGroupMembers, getEligibleRealParticipants, getDuplicateUsernames, syncFromSupabase } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +13,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Pilih grup WhatsApp target terlebih dahulu' }, { status: 400 });
     }
 
+    // Refresh memory cache from Supabase
+    await syncFromSupabase();
+
     const res = await syncGroupMembers(groupJid);
     const members = getWaGroupMembers(groupJid);
     const eligibleReal = getEligibleRealParticipants();
@@ -21,7 +24,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      count: res.count,
+      count: res.count || members.length,
       groupName: res.groupName,
       absenCount,
       eligibleCount: eligibleReal.length,

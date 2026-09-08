@@ -123,18 +123,42 @@ async function syncFromSupabase() {
   } catch {}
 }
 
+export { syncFromSupabase };
 syncFromSupabase();
 // Periodic sync from Supabase
 if (typeof setInterval !== 'undefined') {
   setInterval(syncFromSupabase, 20000);
 }
 
-function safeSupabaseUpsert(table: string, payload: any) {
-  Promise.resolve(supabaseAdmin.from(table).upsert(payload)).catch(() => {});
+export async function safeSupabaseUpsert(table: string, payload: any, onConflict?: string) {
+  try {
+    const defaultConflict: Record<string, string> = {
+      wa_group_members: 'group_jid,jid',
+      giveaway_participants: 'username',
+      settings: 'key',
+      rewards: 'name',
+      detected_gifts: 'name',
+    };
+    const conflictField = onConflict || defaultConflict[table];
+    const options = conflictField ? { onConflict: conflictField } : undefined;
+    const { error } = await supabaseAdmin.from(table).upsert(payload, options);
+    if (error) {
+      console.warn(`[Supabase UPSERT ${table} ERROR]:`, error.message || error);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase UPSERT ${table} EXCEPTION]:`, err?.message || err);
+  }
 }
 
-function safeSupabaseDelete(table: string, column: string, value: any) {
-  Promise.resolve(supabaseAdmin.from(table).delete().eq(column, value)).catch(() => {});
+export async function safeSupabaseDelete(table: string, column: string, value: any) {
+  try {
+    const { error } = await supabaseAdmin.from(table).delete().eq(column, value);
+    if (error) {
+      console.warn(`[Supabase DELETE ${table} ERROR]:`, error.message || error);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase DELETE ${table} EXCEPTION]:`, err?.message || err);
+  }
 }
 
 let db: any = null;
@@ -239,10 +263,20 @@ try {
 export default db;
 
 export function getSetting(key: string, defaultValue: any = null) {
+  // 1. Supabase / Memory cache (primary)
+  if (memorySettings[key] !== undefined) {
+    try {
+      return JSON.parse(memorySettings[key]);
+    } catch {
+      return memorySettings[key];
+    }
+  }
+
+  // 2. Fallback SQLite
   if (db) {
     try {
       const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
-      if (row) {
+      if (row && row.value !== undefined) {
         try {
           return JSON.parse(row.value);
         } catch {
@@ -250,14 +284,6 @@ export function getSetting(key: string, defaultValue: any = null) {
         }
       }
     } catch {}
-  }
-
-  if (memorySettings[key] !== undefined) {
-    try {
-      return JSON.parse(memorySettings[key]);
-    } catch {
-      return memorySettings[key];
-    }
   }
 
   return defaultValue;
@@ -647,12 +673,14 @@ export function checkUserInWaGroup(username: string): { found: boolean; memberTa
     return tag === cleanUser;
   });
 
-  // 2. Cocokkan tepat berdasarkan push_name atau nomor telepon
+  // 2. Cocokkan tepat berdasarkan push_name atau nomor telepon atau JID
   if (!match) {
+    const cleanNumeric = cleanUser.replace(/[^0-9]/g, '');
     match = allMembers.find(m => {
-      const pName = (m.push_name || '').replace(/^@/, '').trim().toLowerCase();
-      const ph = (m.phone || '').trim().toLowerCase();
-      return pName === cleanUser || ph === cleanUser;
+      const pName = (m.push_name || '').replace(/^[@~]/, '').trim().toLowerCase();
+      const ph = (m.phone || '').replace(/[^0-9]/g, '');
+      const jidPh = (m.jid || '').split('@')[0].replace(/[^0-9]/g, '');
+      return pName === cleanUser || (cleanNumeric && (ph === cleanNumeric || jidPh === cleanNumeric));
     });
   }
 
@@ -660,9 +688,19 @@ export function checkUserInWaGroup(username: string): { found: boolean; memberTa
   if (!match && cleanUser.length >= 3) {
     match = allMembers.find(m => {
       const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
-      const pName = (m.push_name || '').replace(/^@/, '').trim().toLowerCase();
+      const pName = (m.push_name || '').replace(/^[@~]/, '').trim().toLowerCase();
       return (tag && (tag.includes(cleanUser) || cleanUser.includes(tag))) ||
              (pName && (pName.includes(cleanUser) || cleanUser.includes(pName)));
+    });
+  }
+
+  // 4. Fallback jika grup target spesifik tidak cocok tapi ada di grup WA manapun
+  if (!match) {
+    const globalMembers = getWaGroupMembers();
+    match = globalMembers.find(m => {
+      const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+      const pName = (m.push_name || '').replace(/^[@~]/, '').trim().toLowerCase();
+      return tag === cleanUser || pName === cleanUser;
     });
   }
 
@@ -728,11 +766,14 @@ export function syncParticipantWaStatus(username: string) {
   }
 
   if (participant) {
-    participant.has_wa_group = isValidWa ? 1 : 0;
     if (waCheck.found) {
-      participant.wa_member_tag = waCheck.memberTag || null;
-      participant.wa_phone = waCheck.phone || null;
+      participant.has_wa_group = isValidWa ? 1 : 0;
+      participant.wa_member_tag = waCheck.memberTag || participant.wa_member_tag || null;
+      participant.wa_phone = waCheck.phone || participant.wa_phone || null;
+    } else if (participant.has_wa_group && (participant.wa_phone || participant.wa_member_tag)) {
+      // Pertahankan jika peserta sudah terverifikasi sebelumnya
     } else {
+      participant.has_wa_group = 0;
       participant.wa_member_tag = null;
       participant.wa_phone = null;
     }
@@ -985,25 +1026,31 @@ export function updateGiveawayComment(username: string, nickname: string, profil
 
 // ── Real participants (is_tester = 0) ──────────────────────────────
 export function getRealParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values())
+      .filter(p => !p.is_tester)
+      .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 0 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values())
-    .filter(p => !p.is_tester)
-    .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  return [];
 }
 
 export function getEligibleRealParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values())
+      .filter(p => !p.is_tester && p.is_eligible === 1)
+      .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 0 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values())
-    .filter(p => !p.is_tester && p.is_eligible === 1)
-    .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
+  return [];
 }
 
 export function resetRealGiveawayData() {
@@ -1020,25 +1067,31 @@ export function resetRealGiveawayData() {
 
 // ── Tester participants (is_tester = 1) ───────────────────────────
 export function getTesterParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values())
+      .filter(p => !!p.is_tester)
+      .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 1 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values())
-    .filter(p => !!p.is_tester)
-    .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  return [];
 }
 
 export function getEligibleTesterParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values())
+      .filter(p => !!p.is_tester && p.is_eligible === 1)
+      .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values())
-    .filter(p => !!p.is_tester && p.is_eligible === 1)
-    .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
+  return [];
 }
 
 export function addGiveawayTester(username: string, nickname: string) {
@@ -1118,21 +1171,27 @@ export function resetGiveawayData() {
 }
 
 export function getGiveawayParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values()).sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants ORDER BY last_updated DESC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values()).sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
+  return [];
 }
 
 export function getEligibleParticipants(): GiveawayParticipant[] {
+  if (memoryParticipants.size > 0) {
+    return Array.from(memoryParticipants.values()).filter(p => p.is_eligible === 1);
+  }
   if (db) {
     try {
       return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
     } catch {}
   }
-  return Array.from(memoryParticipants.values()).filter(p => p.is_eligible === 1);
+  return [];
 }
 
 export function toggleGiveawayRequirement(
@@ -1178,6 +1237,7 @@ export function getGiveawayVideoUrl(): string {
 // ==========================================
 export function saveWaGroupMembers(members: WaMemberRecord[]) {
   const nowIso = new Date().toISOString();
+  const toUpsert: WaMemberRecord[] = [];
 
   for (const item of members) {
     const key = `${item.group_jid}_${item.jid}`;
@@ -1185,7 +1245,7 @@ export function saveWaGroupMembers(members: WaMemberRecord[]) {
     const updated: WaMemberRecord = {
       group_jid: item.group_jid,
       jid: item.jid,
-      phone: item.phone || existing?.phone || '',
+      phone: (item.phone && !/^\d{15,}$/.test(item.phone)) ? item.phone : (existing?.phone || item.phone || ''),
       member_tag: item.member_tag || existing?.member_tag || '',
       push_name: item.push_name || existing?.push_name || '',
       role: item.role || existing?.role || 'member',
@@ -1194,7 +1254,11 @@ export function saveWaGroupMembers(members: WaMemberRecord[]) {
       last_seen: nowIso,
     };
     memoryWaMembers.set(key, updated);
-    safeSupabaseUpsert('wa_group_members', updated);
+    toUpsert.push(updated);
+  }
+
+  if (toUpsert.length > 0) {
+    safeSupabaseUpsert('wa_group_members', toUpsert, 'group_jid,jid');
   }
 
   if (db) {
@@ -1238,6 +1302,14 @@ export function saveWaGroupMembers(members: WaMemberRecord[]) {
 }
 
 export function getWaGroupMembers(groupJid?: string): WaMemberRecord[] {
+  const all = Array.from(memoryWaMembers.values());
+  if (all.length > 0) {
+    if (groupJid) {
+      return all.filter(m => m.group_jid === groupJid).sort((a, b) => (a.member_tag || '').localeCompare(b.member_tag || ''));
+    }
+    return all.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
+  }
+
   if (db) {
     try {
       if (groupJid) {
@@ -1247,11 +1319,7 @@ export function getWaGroupMembers(groupJid?: string): WaMemberRecord[] {
     } catch {}
   }
 
-  const all = Array.from(memoryWaMembers.values());
-  if (groupJid) {
-    return all.filter(m => m.group_jid === groupJid).sort((a, b) => (a.member_tag || '').localeCompare(b.member_tag || ''));
-  }
-  return all.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
+  return [];
 }
 
 export function clearWaGroupMembers(groupJid?: string) {
