@@ -19,6 +19,18 @@ interface Participant {
   last_updated: string;
 }
 
+interface WaMember {
+  jid: string;
+  group_jid: string;
+  phone: string;
+  member_tag: string;
+  push_name: string;
+  role: string;
+  has_absen: number;
+  absen_at?: string | null;
+  last_seen?: string | null;
+}
+
 interface Stats {
   real: { total: number; eligible: number; hasFollowed: number; hasShared: number; hasCommented: number; hasWaGroup?: number };
   tester: { total: number; eligible: number };
@@ -904,6 +916,8 @@ export default function GiveawayPage() {
   const [manualWaNick, setManualWaNick]   = useState<string>('');
   const [manualWaPhone, setManualWaPhone] = useState<string>('');
   const [manualWaLoading, setManualWaLoading] = useState<boolean>(false);
+  const [waAllMembers, setWaAllMembers]   = useState<WaMember[]>([]);
+  const [searchWaMembers, setSearchWaMembers] = useState<string>('');
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
@@ -1155,14 +1169,15 @@ export default function GiveawayPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [resReal, resEReal, resTester, resETester] = await Promise.all([
+      const [resReal, resEReal, resTester, resETester, resWaMembers] = await Promise.all([
         fetch('/api/giveaway/participants?mode=real&filter=all'),
         fetch('/api/giveaway/participants?mode=real&filter=eligible'),
         fetch('/api/giveaway/participants?mode=tester&filter=all'),
         fetch('/api/giveaway/participants?mode=tester&filter=eligible'),
+        fetch('/api/whatsapp/sync'),
       ]);
-      const [dReal, dEReal, dTester, dETester] = await Promise.all([
-        resReal.json(), resEReal.json(), resTester.json(), resETester.json(),
+      const [dReal, dEReal, dTester, dETester, dWaMembers] = await Promise.all([
+        resReal.json(), resEReal.json(), resTester.json(), resETester.json(), resWaMembers.json(),
       ]);
       if (dReal.success) {
         setRealParticipants(dReal.participants);
@@ -1172,6 +1187,9 @@ export default function GiveawayPage() {
       if (dEReal.success) setEligibleReal(dEReal.participants);
       if (dTester.success) setTesterParticipants(dTester.participants);
       if (dETester.success) setEligibleTesters(dETester.participants);
+      if (dWaMembers.success && Array.isArray(dWaMembers.members)) {
+        setWaAllMembers(dWaMembers.members);
+      }
     } catch (e) { console.error(e); }
   }, []);
 
@@ -1180,11 +1198,10 @@ export default function GiveawayPage() {
     fetchConfig();
     fetchWaStatus();
     fetchWaSettingsAndGroups();
-    const id = setInterval(fetchAll, 5000);
+    // Auto-sync peserta dimatikan. Hanya WA status yang refresh otomatis (6 detik).
     const waId = setInterval(fetchWaStatus, 6000);
     const clockId = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => {
-      clearInterval(id);
       clearInterval(waId);
       clearInterval(clockId);
     };
@@ -2164,6 +2181,111 @@ export default function GiveawayPage() {
                   <span>{waSyncing ? 'Sedang Menyinkronkan…' : 'Tarik & Sinkronkan Member Tag Sekarang'}</span>
                 </button>
 
+                {/* Tabel Semua Member Grup WA */}
+                {waAllMembers.length > 0 && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">
+                        📋 Semua Member Grup ({waAllMembers.length})
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {waAllMembers.filter(m => m.has_absen).length} sudah ABSEN •{' '}
+                        {waAllMembers.filter(m => m.has_absen && m.member_tag && /^[a-z0-9._]+$/.test(m.member_tag)).length} valid tag
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="🔍 Cari nama / nomor / member tag…"
+                      value={searchWaMembers}
+                      onChange={e => setSearchWaMembers(e.target.value)}
+                      className="w-full mb-2 px-3 py-2 rounded-xl text-xs bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                    />
+                    <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide">
+                            <th className="text-left py-2 px-3 text-gray-400">#</th>
+                            <th className="text-left py-2 px-3 text-gray-400">Nama WA</th>
+                            <th className="text-left py-2 px-3 text-gray-400">Nomor WA</th>
+                            <th className="text-left py-2 px-3 text-emerald-400">Member Tag (TikTok)</th>
+                            <th className="text-center py-2 px-3 text-yellow-400">ABSEN</th>
+                            <th className="text-left py-2 px-3 text-gray-500">Tag Valid?</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {waAllMembers
+                            .filter(m => {
+                              if (!searchWaMembers) return true;
+                              const q = searchWaMembers.toLowerCase();
+                              return (
+                                (m.push_name || '').toLowerCase().includes(q) ||
+                                (m.phone || '').includes(q) ||
+                                (m.member_tag || '').toLowerCase().includes(q)
+                              );
+                            })
+                            .map((m, i) => {
+                              const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+                              const isValidTag = tag.length >= 2 && /^[a-z0-9._]+$/.test(tag);
+                              const hasAbsen = !!m.has_absen;
+                              return (
+                                <tr key={m.jid || i}
+                                  className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                                >
+                                  <td className="py-2 px-3 text-gray-600">{i + 1}</td>
+                                  <td className="py-2 px-3 text-white">
+                                    {m.push_name
+                                      ? m.push_name.replace(/^~/, '')
+                                      : <span className="text-gray-600 italic">-</span>}
+                                    {m.role === 'admin' && (
+                                      <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">ADMIN</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-gray-400">
+                                    {m.phone ? `+${m.phone}` : '-'}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    {tag ? (
+                                      <a
+                                        href={`https://www.tiktok.com/@${tag}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={`font-mono font-semibold hover:underline ${
+                                          isValidTag ? 'text-emerald-300 hover:text-emerald-200' : 'text-red-400 hover:text-red-300'
+                                        }`}
+                                      >
+                                        @{tag}
+                                      </a>
+                                    ) : (
+                                      <span className="text-gray-600 italic">Belum diisi</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    {hasAbsen ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">✓ ABSEN</span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-700/50 text-gray-500 border border-gray-700">—</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    {tag ? (
+                                      isValidTag ? (
+                                        <span className="text-emerald-400 font-bold">✓ Valid</span>
+                                      ) : (
+                                        <span className="text-red-400 font-bold" title="Username mengandung huruf besar atau karakter tidak valid">✗ Invalid</span>
+                                      )
+                                    ) : (
+                                      <span className="text-gray-600">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* Form Verifikasi / Input Absen Manual */}
                 <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-3">
                   <div className="flex items-center gap-2">
@@ -2211,7 +2333,7 @@ export default function GiveawayPage() {
 
         {/* Footer */}
         <div className="text-center mt-10 text-gray-700 text-xs">
-          <p>Giveaway @onlyvirtus • 6–8 September 2026 (s/d 23:59 WIB) • Auto-refresh 5 detik</p>
+          <p>Giveaway @onlyvirtus • 6–8 September 2026 (s/d 23:59 WIB) • Refresh manual</p>
         </div>
       </div>
     </div>

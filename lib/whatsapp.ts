@@ -20,20 +20,43 @@ const WA_STOP_WORDS = new Set([
     'siap', 'sudah', 'udah', 'terima', 'kasih', 'kakak', 'saya', 'ku', 'bisa', 'banget'
 ]);
 
+/**
+ * Validasi username TikTok:
+ * - Hanya huruf kecil, angka, titik, underscore (a-z 0-9 . _)
+ * - TIDAK boleh huruf besar
+ * - TIDAK boleh spasi
+ * - Panjang 2-32 karakter
+ */
+export function isValidTikTokUsername(tag: string): boolean {
+    if (!tag || tag.length < 2 || tag.length > 32) return false;
+    // Harus seluruhnya lowercase (tidak boleh ada huruf besar)
+    if (tag !== tag.toLowerCase()) return false;
+    // Hanya boleh a-z, 0-9, underscore, titik
+    if (!/^[a-z0-9._]+$/.test(tag)) return false;
+    return true;
+}
+
+/** Normalisasi tag: lowercase, strip @, trim spasi */
+function normalizeTag(raw: string): string {
+    return raw.replace(/^@/, '').trim().toLowerCase();
+}
+
 export function extractMemberTagFromMessage(messageBody: string, pushName?: string, knownUsernames: string[] = []): string {
     if (!messageBody) return '';
     const cleanBody = messageBody.trim();
 
     // 1. Explicit mention/tag with @ (contoh: "@ilvy0uv", "absen @ilvy0uv", "@ilvy0uv hadir")
     const atMatch = cleanBody.match(/@([a-zA-Z0-9._]{2,32})/);
-    if (atMatch && atMatch[1] && !WA_STOP_WORDS.has(atMatch[1].toLowerCase())) {
-        return atMatch[1].trim();
+    if (atMatch && atMatch[1]) {
+        const norm = normalizeTag(atMatch[1]);
+        if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
     // 2. Explicit prefix seperti "tt: ilvy0uv", "tiktok: ilvy0uv", "username: ilvy0uv", "tag: ilvy0uv"
     const prefixMatch = cleanBody.match(/(?:tt|tiktok|username|user|tag|akun)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
-    if (prefixMatch && prefixMatch[1] && !WA_STOP_WORDS.has(prefixMatch[1].toLowerCase())) {
-        return prefixMatch[1].trim();
+    if (prefixMatch && prefixMatch[1]) {
+        const norm = normalizeTag(prefixMatch[1]);
+        if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
     // 3. Multi-line format (contoh di WhatsApp: baris 1 "hykeoony", baris 2 "absen")
@@ -43,9 +66,9 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
             const isAbsenLine = /(?:^|[^a-zA-Z0-9])(absen|hadir|ikutan)(?:$|[^a-zA-Z0-9])/i.test(line);
             if (!isAbsenLine) {
                 const cleanWord = line.replace(/^[@~]/, '').trim();
-                const wordMatch = cleanWord.match(/^[a-zA-Z0-9._]{2,32}$/);
-                if (wordMatch && !WA_STOP_WORDS.has(wordMatch[0].toLowerCase())) {
-                    return wordMatch[0];
+                const norm = cleanWord.toLowerCase();
+                if (/^[a-z0-9._]{2,32}$/.test(norm) && !WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) {
+                    return norm;
                 }
             }
         }
@@ -54,25 +77,21 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
     // 4. Pola: "absen <username>" atau "hadir <username>" (contoh: "absen ilvy0uv", "hadir ilvy0uv", "ABSEN ilvy0uv")
     const afterAbsenMatch = cleanBody.match(/(?:absen|hadir|ikutan)\s+[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
     if (afterAbsenMatch && afterAbsenMatch[1]) {
-        const cand = afterAbsenMatch[1].toLowerCase();
-        if (!WA_STOP_WORDS.has(cand)) {
-            return afterAbsenMatch[1].trim();
-        }
+        const norm = normalizeTag(afterAbsenMatch[1]);
+        if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
     // 5. Pola: "<username> absen" atau "<username> hadir" (contoh: "ilvy0uv absen", "ilvy0uv hadir")
     const beforeAbsenMatch = cleanBody.match(/@?([a-zA-Z0-9._]{2,32})\s+(?:absen|hadir)/i);
     if (beforeAbsenMatch && beforeAbsenMatch[1]) {
-        const cand = beforeAbsenMatch[1].toLowerCase();
-        if (!WA_STOP_WORDS.has(cand)) {
-            return beforeAbsenMatch[1].trim();
-        }
+        const norm = normalizeTag(beforeAbsenMatch[1]);
+        if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
     // 6. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar
     for (const u of knownUsernames) {
         if (u && u.length >= 3 && new RegExp('\\b' + u + '\\b', 'i').test(cleanBody)) {
-            return u;
+            return u.toLowerCase();
         }
     }
 

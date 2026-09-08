@@ -125,10 +125,8 @@ async function syncFromSupabase() {
 
 export { syncFromSupabase };
 syncFromSupabase();
-// Periodic sync from Supabase
-if (typeof setInterval !== 'undefined') {
-  setInterval(syncFromSupabase, 20000);
-}
+// Auto-sync dimatikan — hanya sync manual via tombol sinkronisasi
+
 
 export async function safeSupabaseUpsert(table: string, payload: any, onConflict?: string) {
   try {
@@ -576,7 +574,7 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
   }
   const nowIso = new Date().toISOString();
 
-  let finalTag = memberTag && memberTag.trim() ? memberTag.trim().replace(/^@/, '') : '';
+  let finalTag = memberTag && memberTag.trim() ? memberTag.trim().replace(/^@/, '').toLowerCase() : '';
 
   // 1. Jika belum ada tag, cari dari data member grup yang sudah tersimpan (berdasarkan JID atau No HP)
   if (!finalTag) {
@@ -624,10 +622,12 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   saveWaGroupMembers([memberPayload]);
 
-  const cleanTag = finalTag ? finalTag.replace(/^@/, '').trim() : (cleanPushName ? cleanPushName.trim() : phone);
+  const cleanTag = finalTag ? finalTag : ''; // sudah lowercase dari atas
   const displayName = cleanPushName || cleanTag;
 
-  if (cleanTag) {
+  // Hanya tambah ke peserta jika tag adalah valid TikTok username (lowercase, no spasi)
+  const isValidTag = cleanTag.length >= 2 && /^[a-z0-9._]+$/.test(cleanTag);
+  if (isValidTag) {
     addGiveawayParticipant(cleanTag, displayName, null, 1, phone || null, cleanTag);
   }
 
@@ -814,15 +814,19 @@ export function syncAllParticipantsWithWa() {
   const absenMembers = getWaGroupMembers(getTargetWaGroup() || undefined).filter(m => !!m.has_absen);
 
   for (const m of absenMembers) {
-    const cleanTag = (m.member_tag || '').replace(/^@/, '').trim();
+    // Ambil dan normalisasi member_tag → ini adalah username TikTok
+    const rawTag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
     const cleanPush = m.push_name ? m.push_name.replace(/^~/, '').trim() : '';
-    const username = cleanTag || cleanPush || m.phone;
-    const displayName = cleanPush || username;
     const phone = m.phone || null;
 
-    if (username) {
-      addGiveawayParticipant(username, displayName, null, 1, phone, cleanTag || username);
+    // Validasi: username TikTok harus valid (lowercase, no spasi, hanya a-z 0-9 . _)
+    const isValidTag = rawTag.length >= 2 && /^[a-z0-9._]+$/.test(rawTag);
+
+    if (isValidTag) {
+      // username TikTok = member_tag yang sudah divalidasi
+      addGiveawayParticipant(rawTag, cleanPush || rawTag, null, 1, phone, rawTag);
     }
+    // Jika tidak ada tag valid, member ini tidak masuk daftar peserta giveaway
   }
 
   const realParticipants = getRealParticipants();
