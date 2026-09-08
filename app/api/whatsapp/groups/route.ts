@@ -10,11 +10,17 @@ export async function GET() {
     const targetGroup = getTargetWaGroup();
     return NextResponse.json({
       success: true,
-      groups,
-      targetGroup,
+      groups: Array.isArray(groups) ? groups : [],
+      targetGroup: targetGroup || '',
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    const fallbackTarget = getTargetWaGroup();
+    return NextResponse.json({
+      success: true,
+      groups: fallbackTarget ? [{ id: fallbackTarget, subject: 'Grup Target Komunitas', size: 0 }] : [],
+      targetGroup: fallbackTarget || '',
+      error: err?.message
+    });
   }
 }
 
@@ -27,6 +33,6 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ success: false, error: 'groupJid is required' }, { status: 400 });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: err?.message || 'Server error' }, { status: 500 });
   }
 }

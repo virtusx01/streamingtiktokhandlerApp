@@ -8,7 +8,14 @@ export async function GET() {
     const status = getWAStatus();
     return NextResponse.json({ success: true, ...status });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      status: 'DISCONNECTED',
+      qrCodeUrl: null,
+      phoneNumber: null,
+      userName: null,
+      error: err?.message || 'Error checking WA status'
+    });
   }
 }
 
@@ -18,15 +25,35 @@ export async function POST(req: Request) {
     const action = body.action || 'connect';
 
     if (action === 'connect') {
-      initWhatsApp().catch(e => console.error('[WA API] init error:', e));
-      return NextResponse.json({ success: true, message: 'Inisialisasi koneksi WhatsApp dimulai' });
+      const currentStatus = getWAStatus();
+      if (currentStatus.status === 'CONNECTED') {
+        return NextResponse.json({
+          success: true,
+          message: `WhatsApp sudah terhubung (${currentStatus.phoneNumber || 'Aktif'})`,
+          ...currentStatus
+        });
+      }
+
+      try {
+        initWhatsApp().catch(e => console.warn('[WA API] Background init error:', e?.message || e));
+      } catch (initErr: any) {
+        console.warn('[WA API] Init sync error:', initErr?.message || initErr);
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Inisialisasi koneksi WhatsApp dimulai, silakan tunggu QR Code...',
+        status: 'CONNECTING'
+      });
     } else if (action === 'disconnect') {
-      await disconnectWhatsApp();
-      return NextResponse.json({ success: true, message: 'WhatsApp berhasil diputus' });
+      try {
+        await disconnectWhatsApp();
+      } catch {}
+      return NextResponse.json({ success: true, message: 'WhatsApp berhasil diputus', status: 'DISCONNECTED' });
     }
 
     return NextResponse.json({ success: false, error: 'Aksi tidak dikenali' }, { status: 400 });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: err?.message || 'Server error' }, { status: 500 });
   }
 }

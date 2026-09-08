@@ -2,6 +2,35 @@ import path from 'path';
 import fs from 'fs';
 import { supabaseAdmin } from './supabase';
 
+export interface GiveawayParticipant {
+    username: string;
+    nickname: string;
+    profile_picture: string | null;
+    has_followed: number;
+    has_liked: number;
+    has_shared: number;
+    has_commented: number;
+    has_wa_group?: number;
+    wa_member_tag?: string | null;
+    wa_phone?: string | null;
+    is_eligible: number;
+    is_tester: number;
+    registered_at: string;
+    last_updated: string;
+}
+
+export interface WaMemberRecord {
+    group_jid: string;
+    jid: string;
+    phone: string;
+    member_tag: string;
+    push_name: string;
+    role?: string;
+    has_absen?: number;
+    absen_at?: string | null;
+    last_seen?: string;
+}
+
 const memorySettings: Record<string, string> = {
   tiktokUsername: '"@onlyvirtus"',
   autoStartListener: 'true',
@@ -26,6 +55,11 @@ const memorySettings: Record<string, string> = {
 };
 
 const memoryRewards: Record<string, any> = {};
+const memoryRewardPresets: Record<string, { data: string; created_at: string }> = {};
+const memoryDetectedGifts = new Map<string, { name: string; count: number; last_seen: string }>();
+const memoryUserLikes = new Map<string, any>();
+const memoryParticipants = new Map<string, GiveawayParticipant>();
+const memoryWaMembers = new Map<string, WaMemberRecord>();
 
 // Background sync from Supabase into memory
 async function syncFromSupabase() {
@@ -52,12 +86,55 @@ async function syncFromSupabase() {
       });
     }
   } catch {}
+
+  try {
+    const { data } = await supabaseAdmin.from('giveaway_participants').select('*');
+    if (data && Array.isArray(data)) {
+      data.forEach((row: any) => {
+        if (row && row.username) memoryParticipants.set(row.username, row);
+      });
+    }
+  } catch {}
+
+  try {
+    const { data } = await supabaseAdmin.from('wa_group_members').select('*');
+    if (data && Array.isArray(data)) {
+      data.forEach((row: any) => {
+        if (row && row.group_jid && row.jid) {
+          memoryWaMembers.set(`${row.group_jid}_${row.jid}`, row);
+        }
+      });
+    }
+  } catch {}
+
+  try {
+    const { data } = await supabaseAdmin.from('detected_gifts').select('*');
+    if (data && Array.isArray(data)) {
+      data.forEach((row: any) => {
+        if (row && row.name) {
+          memoryDetectedGifts.set(row.name, {
+            name: row.name,
+            count: Number(row.count) || 1,
+            last_seen: row.last_seen || new Date().toISOString()
+          });
+        }
+      });
+    }
+  } catch {}
 }
 
 syncFromSupabase();
+// Periodic sync from Supabase
+if (typeof setInterval !== 'undefined') {
+  setInterval(syncFromSupabase, 20000);
+}
 
 function safeSupabaseUpsert(table: string, payload: any) {
   Promise.resolve(supabaseAdmin.from(table).upsert(payload)).catch(() => {});
+}
+
+function safeSupabaseDelete(table: string, column: string, value: any) {
+  Promise.resolve(supabaseAdmin.from(table).delete().eq(column, value)).catch(() => {});
 }
 
 let db: any = null;
@@ -155,7 +232,7 @@ try {
   try { db.exec(`ALTER TABLE wa_group_members ADD COLUMN has_absen INTEGER DEFAULT 0`); } catch (_) {}
   try { db.exec(`ALTER TABLE wa_group_members ADD COLUMN absen_at TEXT`); } catch (_) {}
 } catch (e: any) {
-  console.warn('[DB] SQLite is unavailable or read-only (cloud/serverless environment). Operating via Memory & Supabase:', e.message);
+  console.warn('[DB] SQLite is unavailable or read-only (cloud/serverless environment). Operating via Memory & Supabase:', e?.message || e);
   db = null;
 }
 
@@ -271,547 +348,895 @@ export function deleteAllRewards() {
 // REWARD PRESETS
 // ==========================================
 export function getRewardPresets() {
-    return db.prepare('SELECT id, name, created_at FROM reward_presets ORDER BY created_at DESC').all() as { id: number, name: string, created_at: string }[];
+  if (db) {
+    try {
+      return db.prepare('SELECT id, name, created_at FROM reward_presets ORDER BY created_at DESC').all() as { id: number, name: string, created_at: string }[];
+    } catch {}
+  }
+  return Object.entries(memoryRewardPresets).map(([name, val], id) => ({
+    id: id + 1,
+    name,
+    created_at: val.created_at,
+  }));
 }
 
 export function saveRewardPreset(name: string, rewards: Record<string, any>) {
-    db.prepare('INSERT OR REPLACE INTO reward_presets (name, data) VALUES (?, ?)').run(name, JSON.stringify(rewards));
+  const now = new Date().toISOString();
+  memoryRewardPresets[name] = { data: JSON.stringify(rewards), created_at: now };
+  if (db) {
+    try {
+      db.prepare('INSERT OR REPLACE INTO reward_presets (name, data) VALUES (?, ?)').run(name, JSON.stringify(rewards));
+    } catch {}
+  }
 }
 
 export function loadRewardPreset(name: string): Record<string, any> | null {
-    const row = db.prepare('SELECT data FROM reward_presets WHERE name = ?').get(name) as { data: string } | undefined;
-    if (!row) return null;
-    try { return JSON.parse(row.data); } catch { return null; }
+  if (db) {
+    try {
+      const row = db.prepare('SELECT data FROM reward_presets WHERE name = ?').get(name) as { data: string } | undefined;
+      if (row) {
+        return JSON.parse(row.data);
+      }
+    } catch {}
+  }
+  if (memoryRewardPresets[name]) {
+    try {
+      return JSON.parse(memoryRewardPresets[name].data);
+    } catch {}
+  }
+  return null;
 }
 
 export function deleteRewardPreset(name: string) {
-    db.prepare('DELETE FROM reward_presets WHERE name = ?').run(name);
+  delete memoryRewardPresets[name];
+  if (db) {
+    try {
+      db.prepare('DELETE FROM reward_presets WHERE name = ?').run(name);
+    } catch {}
+  }
 }
 
 export function renameRewardPreset(oldName: string, newName: string) {
-    db.prepare('UPDATE reward_presets SET name = ? WHERE name = ?').run(newName, oldName);
+  if (memoryRewardPresets[oldName]) {
+    memoryRewardPresets[newName] = memoryRewardPresets[oldName];
+    delete memoryRewardPresets[oldName];
+  }
+  if (db) {
+    try {
+      db.prepare('UPDATE reward_presets SET name = ? WHERE name = ?').run(newName, oldName);
+    } catch {}
+  }
 }
 
 // ==========================================
 // DETECTED GIFTS
 // ==========================================
-export function addDetectedGift(name: string) {
-    db.prepare(`
-      INSERT INTO detected_gifts (name, count, last_seen) VALUES (?, 1, datetime('now'))
-      ON CONFLICT(name) DO UPDATE SET count = count + 1, last_seen = datetime('now')
-    `).run(name);
+export function recordDetectedGift(name: string) {
+  const existing = memoryDetectedGifts.get(name);
+  const count = (existing?.count || 0) + 1;
+  const last_seen = new Date().toISOString();
+  memoryDetectedGifts.set(name, { name, count, last_seen });
+
+  if (db) {
+    try {
+      db.prepare(`
+        INSERT INTO detected_gifts (name, count, last_seen) VALUES (?, 1, datetime('now'))
+        ON CONFLICT(name) DO UPDATE SET count = count + 1, last_seen = datetime('now')
+      `).run(name);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('detected_gifts', { name, count, last_seen });
 }
 
+export const addDetectedGift = recordDetectedGift;
+
 export function getDetectedGifts() {
-    return db.prepare('SELECT name, count, last_seen FROM detected_gifts ORDER BY count DESC').all() as { name: string, count: number, last_seen: string }[];
+  if (db) {
+    try {
+      return db.prepare('SELECT name, count, last_seen FROM detected_gifts ORDER BY count DESC').all() as { name: string, count: number, last_seen: string }[];
+    } catch {}
+  }
+  return Array.from(memoryDetectedGifts.values()).sort((a, b) => b.count - a.count);
 }
 
 // ==========================================
 // LIKE MILESTONES & USER TRACKING
 // ==========================================
 export function resetLikeSession() {
-    db.prepare('DELETE FROM user_likes').run();
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('lastMilestonePerformed', '0')").run();
+  memoryUserLikes.clear();
+  setSetting('lastMilestonePerformed', '0');
+  if (db) {
+    try {
+      db.prepare('DELETE FROM user_likes').run();
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('lastMilestonePerformed', '0')").run();
+    } catch {}
+  }
 }
 
 export function getUserLikes(username: string) {
-    return db.prepare('SELECT * FROM user_likes WHERE username = ?').get(username) as { 
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM user_likes WHERE username = ?').get(username) as { 
         username: string, 
         nickname: string, 
         total_likes: number, 
         last_milestone: number 
-    } | undefined;
+      } | undefined;
+    } catch {}
+  }
+  return memoryUserLikes.get(username);
 }
 
 export function updateUserLikes(username: string, nickname: string, totalLikes: number, lastMilestone?: number) {
-    if (lastMilestone !== undefined) {
+  const current = memoryUserLikes.get(username) || { total_likes: 0, last_milestone: 0 };
+  const updated = {
+    username,
+    nickname,
+    total_likes: Math.max(current.total_likes, totalLikes),
+    last_milestone: lastMilestone !== undefined ? lastMilestone : current.last_milestone,
+    last_updated: new Date().toISOString()
+  };
+  memoryUserLikes.set(username, updated);
+
+  if (db) {
+    try {
+      if (lastMilestone !== undefined) {
         db.prepare(`
-            INSERT INTO user_likes (username, nickname, total_likes, last_milestone, last_updated) 
-            VALUES (?, ?, ?, ?, datetime('now'))
-            ON CONFLICT(username) DO UPDATE SET 
-                nickname = excluded.nickname,
-                total_likes = MAX(total_likes, excluded.total_likes),
-                last_milestone = excluded.last_milestone,
-                last_updated = datetime('now')
+          INSERT INTO user_likes (username, nickname, total_likes, last_milestone, last_updated) 
+          VALUES (?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(username) DO UPDATE SET 
+            nickname = excluded.nickname,
+            total_likes = MAX(total_likes, excluded.total_likes),
+            last_milestone = excluded.last_milestone,
+            last_updated = datetime('now')
         `).run(username, nickname, totalLikes, lastMilestone);
-    } else {
+      } else {
         db.prepare(`
-            INSERT INTO user_likes (username, nickname, total_likes, last_updated) 
-            VALUES (?, ?, ?, datetime('now'))
-            ON CONFLICT(username) DO UPDATE SET 
-                nickname = excluded.nickname,
-                total_likes = MAX(total_likes, excluded.total_likes),
-                last_updated = datetime('now')
+          INSERT INTO user_likes (username, nickname, total_likes, last_updated) 
+          VALUES (?, ?, ?, datetime('now'))
+          ON CONFLICT(username) DO UPDATE SET 
+            nickname = excluded.nickname,
+            total_likes = MAX(total_likes, excluded.total_likes),
+            last_updated = datetime('now')
         `).run(username, nickname, totalLikes);
-    }
+      }
+    } catch {}
+  }
 }
 
 // ==========================================
-// GIVEAWAY PARTICIPANTS
+// GIVEAWAY SETTINGS & HELPERS
 // ==========================================
-export interface GiveawayParticipant {
-    username: string;
-    nickname: string;
-    profile_picture: string | null;
-    has_followed: number;
-    has_shared: number;
-    has_commented: number;
-    has_wa_group?: number;
-    wa_member_tag?: string | null;
-    wa_phone?: string | null;
-    is_eligible: number;
-    is_tester: number;
-    registered_at: string;
-    last_updated: string;
-}
-
 export function isWaRequirementMandatory(): boolean {
-    return !!getSetting('giveaway_wa_mandatory', false);
+  return !!getSetting('giveaway_wa_mandatory', false);
 }
 
 export function setWaRequirementMandatory(mandatory: boolean) {
-    setSetting('giveaway_wa_mandatory', mandatory);
-    recomputeAllEligibility();
+  setSetting('giveaway_wa_mandatory', mandatory);
+  recomputeAllEligibility();
 }
 
 export function getTargetWaGroup(): string {
-    return getSetting('giveaway_target_wa_group', '');
+  return getSetting('giveaway_target_wa_group', '');
 }
 
 export function setTargetWaGroup(groupJid: string) {
-    setSetting('giveaway_target_wa_group', groupJid);
+  setSetting('giveaway_target_wa_group', groupJid);
 }
 
 export function isWithinAbsenPeriod(date: Date = new Date()): boolean {
-    // 6 September 2026 00:00:00 WIB s/d 8 September 2026 23:59:59 WIB (UTC+7)
-    const start = new Date('2026-09-06T00:00:00+07:00');
-    const end   = new Date('2026-09-08T23:59:59+07:00');
-    return date >= start && date <= end;
+  const start = new Date('2026-09-06T00:00:00+07:00');
+  const end   = new Date('2026-09-08T23:59:59+07:00');
+  return date >= start && date <= end;
 }
 
 export function recordAbsenMessage(groupJid: string, senderJid: string, memberTag?: string, pushName?: string) {
-    const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
-    const nowIso = new Date().toISOString();
+  const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+  const nowIso = new Date().toISOString();
 
-    // Pastikan jika memberTag kosong, cari apakah sebelumnya sudah pernah tersimpan member_tag untuk jid ini
-    let finalTag = memberTag && memberTag.trim() ? memberTag.trim() : '';
-    if (!finalTag) {
-        const existing = db.prepare('SELECT member_tag FROM wa_group_members WHERE group_jid = ? AND jid = ?').get(groupJid, senderJid) as { member_tag: string } | undefined;
-        if (existing && existing.member_tag) {
-            finalTag = existing.member_tag;
-        }
+  let finalTag = memberTag && memberTag.trim() ? memberTag.trim() : '';
+  if (!finalTag) {
+    const existing = getWaGroupMembers(groupJid).find(m => m.jid === senderJid);
+    if (existing && existing.member_tag) {
+      finalTag = existing.member_tag;
     }
+  }
 
-    db.prepare(`
-        INSERT INTO wa_group_members (group_jid, jid, phone, member_tag, push_name, role, has_absen, absen_at, last_seen)
-        VALUES (?, ?, ?, ?, ?, 'member', 1, ?, datetime('now'))
-        ON CONFLICT(group_jid, jid) DO UPDATE SET
-            phone = excluded.phone,
-            member_tag = COALESCE(NULLIF(excluded.member_tag, ''), wa_group_members.member_tag),
-            push_name = COALESCE(NULLIF(excluded.push_name, ''), wa_group_members.push_name),
-            has_absen = 1,
-            absen_at = excluded.absen_at,
-            last_seen = datetime('now')
-    `).run(groupJid, senderJid, phone, finalTag || null, pushName || null, nowIso);
+  const memberPayload: WaMemberRecord = {
+    group_jid: groupJid,
+    jid: senderJid,
+    phone,
+    member_tag: finalTag || '',
+    push_name: pushName || '',
+    role: 'member',
+    has_absen: 1,
+    absen_at: nowIso,
+    last_seen: nowIso,
+  };
 
-    // Otomatis daftarkan langsung ke peserta giveaway
-    // Jika ada memberTag (misal: ilvy0uv), jadikan username. Jika belum ada tag, gunakan pushName atau phone sebagai username
-    const cleanTag = finalTag ? finalTag.replace(/^@/, '').trim() : (pushName ? pushName.trim() : phone);
-    const displayName = pushName || cleanTag;
+  saveWaGroupMembers([memberPayload]);
 
-    if (cleanTag) {
-        db.prepare(`
-            INSERT INTO giveaway_participants (username, nickname, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, wa_phone, is_eligible, is_tester, last_updated)
-            VALUES (?, ?, 1, 1, 1, 1, ?, ?, 1, 0, datetime('now'))
-            ON CONFLICT(username) DO UPDATE SET
-                nickname = excluded.nickname,
-                has_followed = 1,
-                has_shared = 1,
-                has_commented = 1,
-                has_wa_group = 1,
-                is_eligible = 1,
-                wa_member_tag = COALESCE(NULLIF(excluded.wa_member_tag, ''), giveaway_participants.wa_member_tag),
-                wa_phone = excluded.wa_phone,
-                last_updated = datetime('now')
-        `).run(cleanTag, displayName, finalTag || cleanTag, phone);
-        console.log(`[Giveaway Auto-Register] ✅ Berhasil mendaftarkan peserta dari WA: @${cleanTag} (${displayName})`);
-    }
+  const cleanTag = finalTag ? finalTag.replace(/^@/, '').trim() : (pushName ? pushName.trim() : phone);
+  const displayName = pushName || cleanTag;
 
-    // Otomatis sinkronkan seluruh peserta giveaway yang ada
-    syncAllParticipantsWithWa();
+  if (cleanTag) {
+    addGiveawayParticipant(cleanTag, displayName, null, 1);
+  }
+
+  syncAllParticipantsWithWa();
 }
 
 export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, phone?: string) {
-    const cleanTag = usernameOrTag.replace(/^@/, '').trim();
-    const displayName = nickname?.trim() || cleanTag;
-    const targetGroup = getTargetWaGroup() || '120363409436448923@g.us';
-    const fakeJid = `${cleanTag}@s.whatsapp.net`;
+  const cleanTag = usernameOrTag.replace(/^@/, '').trim();
+  const displayName = nickname?.trim() || cleanTag;
+  const targetGroup = getTargetWaGroup() || '120363409436448923@g.us';
+  const fakeJid = `${cleanTag}@s.whatsapp.net`;
+  const nowIso = new Date().toISOString();
 
-    db.prepare(`
-        INSERT INTO wa_group_members (group_jid, jid, phone, member_tag, push_name, role, has_absen, absen_at, last_seen)
-        VALUES (?, ?, ?, ?, ?, 'member', 1, datetime('now'), datetime('now'))
-        ON CONFLICT(group_jid, jid) DO UPDATE SET
-            member_tag = excluded.member_tag,
-            push_name = excluded.push_name,
-            has_absen = 1,
-            absen_at = datetime('now'),
-            last_seen = datetime('now')
-    `).run(targetGroup, fakeJid, phone || '', cleanTag, displayName);
+  const memberPayload: WaMemberRecord = {
+    group_jid: targetGroup,
+    jid: fakeJid,
+    phone: phone || '',
+    member_tag: cleanTag,
+    push_name: displayName,
+    role: 'member',
+    has_absen: 1,
+    absen_at: nowIso,
+    last_seen: nowIso,
+  };
 
-    db.prepare(`
-        INSERT INTO giveaway_participants (username, nickname, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, wa_phone, is_eligible, is_tester, last_updated)
-        VALUES (?, ?, 1, 1, 1, 1, ?, ?, 1, 0, datetime('now'))
-        ON CONFLICT(username) DO UPDATE SET
-            nickname = excluded.nickname,
-            has_followed = 1,
-            has_shared = 1,
-            has_commented = 1,
-            has_wa_group = 1,
-            wa_member_tag = excluded.wa_member_tag,
-            wa_phone = excluded.wa_phone,
-            is_eligible = 1,
-            is_tester = 0,
-            last_updated = datetime('now')
-    `).run(cleanTag, displayName, cleanTag, phone || '');
+  saveWaGroupMembers([memberPayload]);
 
-    computeEligibility(cleanTag);
-    return { success: true, username: cleanTag, nickname: displayName };
+  addGiveawayParticipant(cleanTag, displayName, null, 1);
+
+  return { success: true, username: cleanTag, nickname: displayName };
 }
 
 export function checkUserInWaGroup(username: string): { found: boolean; memberTag?: string; phone?: string; hasAbsen?: boolean } {
-    const cleanUser = username.replace(/^@/, '').trim().toLowerCase();
-    const targetGroup = getTargetWaGroup();
+  const cleanUser = username.replace(/^@/, '').trim().toLowerCase();
+  const targetGroup = getTargetWaGroup();
+  const allMembers = getWaGroupMembers(targetGroup || undefined);
 
-    // 1. Cek berdasarkan member_tag
-    let query = `
-        SELECT phone, member_tag, push_name, has_absen 
-        FROM wa_group_members 
-        WHERE LOWER(TRIM(REPLACE(member_tag, '@', ''))) = ?
-    `;
-    const params: any[] = [cleanUser];
-    if (targetGroup) {
-        query += ` AND group_jid = ?`;
-        params.push(targetGroup);
-    }
+  // 1. Check by member_tag
+  let match = allMembers.find(m => {
+    const tag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+    return tag === cleanUser;
+  });
 
-    let row = db.prepare(query).get(...params) as { phone: string; member_tag: string; push_name: string; has_absen: number } | undefined;
+  // 2. Fallback check by push_name or phone
+  if (!match) {
+    match = allMembers.find(m => {
+      const pName = (m.push_name || '').replace(/^@/, '').trim().toLowerCase();
+      const ph = (m.phone || '').trim().toLowerCase();
+      return pName === cleanUser || ph === cleanUser;
+    });
+  }
 
-    // 2. Fallback jika username cocok dengan push_name (nama profil WA) atau phone
-    if (!row) {
-        let fallbackQuery = `
-            SELECT phone, member_tag, push_name, has_absen 
-            FROM wa_group_members 
-            WHERE (LOWER(TRIM(REPLACE(push_name, '@', ''))) = ? OR LOWER(TRIM(phone)) = ?)
-        `;
-        const fallbackParams: any[] = [cleanUser, cleanUser];
-        if (targetGroup) {
-            fallbackQuery += ` AND group_jid = ?`;
-            fallbackParams.push(targetGroup);
-        }
-        row = db.prepare(fallbackQuery).get(...fallbackParams) as { phone: string; member_tag: string; push_name: string; has_absen: number } | undefined;
-    }
+  if (match) {
+    return {
+      found: true,
+      memberTag: match.member_tag || match.push_name,
+      phone: match.phone,
+      hasAbsen: !!match.has_absen,
+    };
+  }
 
-    if (row) {
-        return {
-            found: true,
-            memberTag: row.member_tag || row.push_name,
-            phone: row.phone,
-            hasAbsen: !!row.has_absen,
-        };
-    }
-    return { found: false };
+  return { found: false };
 }
 
 function computeEligibility(username: string) {
-    const p = db.prepare('SELECT has_wa_group FROM giveaway_participants WHERE username = ?').get(username) as { has_wa_group: number } | undefined;
-    if (!p) return;
+  let participant = memoryParticipants.get(username);
+  if (!participant && db) {
+    try {
+      participant = db.prepare('SELECT * FROM giveaway_participants WHERE username = ?').get(username) as GiveawayParticipant | undefined;
+    } catch {}
+  }
 
-    // SYARAT MUTLAK: Wajib memiliki Member Tag Username TikTok & sudah mengetik ABSEN di grup WhatsApp (has_wa_group = 1)
-    const eligible = p.has_wa_group ? 1 : 0;
+  if (!participant) return;
 
-    db.prepare(`UPDATE giveaway_participants SET is_eligible = ?, last_updated = datetime('now') WHERE username = ?`).run(eligible, username);
+  const eligible = participant.has_wa_group ? 1 : 0;
+  participant.is_eligible = eligible;
+  participant.last_updated = new Date().toISOString();
+  memoryParticipants.set(username, participant);
+
+  if (db) {
+    try {
+      db.prepare(`UPDATE giveaway_participants SET is_eligible = ?, last_updated = datetime('now') WHERE username = ?`).run(eligible, username);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', {
+    username,
+    is_eligible: eligible,
+    last_updated: participant.last_updated
+  });
 }
 
 export function recomputeAllEligibility() {
-    const participants = db.prepare('SELECT username FROM giveaway_participants').all() as { username: string }[];
-    for (const p of participants) {
-        computeEligibility(p.username);
-    }
+  const participants = getGiveawayParticipants();
+  for (const p of participants) {
+    computeEligibility(p.username);
+  }
 }
 
 export function syncParticipantWaStatus(username: string) {
-    const waCheck = checkUserInWaGroup(username);
-    const isValidWa = waCheck.found && waCheck.hasAbsen;
+  const waCheck = checkUserInWaGroup(username);
+  const isValidWa = waCheck.found && waCheck.hasAbsen;
+  const nowIso = new Date().toISOString();
+
+  let participant = memoryParticipants.get(username);
+  if (!participant && db) {
+    try {
+      participant = db.prepare('SELECT * FROM giveaway_participants WHERE username = ?').get(username) as GiveawayParticipant | undefined;
+    } catch {}
+  }
+
+  if (participant) {
+    participant.has_wa_group = isValidWa ? 1 : 0;
     if (waCheck.found) {
-        db.prepare(`
-            UPDATE giveaway_participants 
-            SET has_wa_group = ?, wa_member_tag = ?, wa_phone = ?, last_updated = datetime('now')
-            WHERE username = ?
-        `).run(isValidWa ? 1 : 0, waCheck.memberTag || null, waCheck.phone || null, username);
+      participant.wa_member_tag = waCheck.memberTag || null;
+      participant.wa_phone = waCheck.phone || null;
     } else {
-        db.prepare(`
-            UPDATE giveaway_participants 
-            SET has_wa_group = 0, last_updated = datetime('now')
-            WHERE username = ?
-        `).run(username);
+      participant.wa_member_tag = null;
+      participant.wa_phone = null;
     }
-    computeEligibility(username);
+    participant.last_updated = nowIso;
+    memoryParticipants.set(username, participant);
+
+    safeSupabaseUpsert('giveaway_participants', {
+      username,
+      has_wa_group: participant.has_wa_group,
+      wa_member_tag: participant.wa_member_tag,
+      wa_phone: participant.wa_phone,
+      last_updated: nowIso
+    });
+  }
+
+  if (db) {
+    try {
+      if (waCheck.found) {
+        db.prepare(`
+          UPDATE giveaway_participants 
+          SET has_wa_group = ?, wa_member_tag = ?, wa_phone = ?, last_updated = datetime('now')
+          WHERE username = ?
+        `).run(isValidWa ? 1 : 0, waCheck.memberTag || null, waCheck.phone || null, username);
+      } else {
+        db.prepare(`
+          UPDATE giveaway_participants 
+          SET has_wa_group = 0, last_updated = datetime('now')
+          WHERE username = ?
+        `).run(username);
+      }
+    } catch {}
+  }
+
+  computeEligibility(username);
 }
 
 export function syncAllParticipantsWithWa() {
-    // 1. Ambil semua member WA yang sudah absen di grup
-    const targetGroup = getTargetWaGroup();
-    let query = 'SELECT * FROM wa_group_members WHERE has_absen = 1';
-    const params: any[] = [];
-    if (targetGroup) {
-        query += ' AND group_jid = ?';
-        params.push(targetGroup);
-    }
-    const absenMembers = db.prepare(query).all(...params) as WaMemberRecord[];
+  const absenMembers = getWaGroupMembers(getTargetWaGroup() || undefined).filter(m => !!m.has_absen);
 
-    for (const m of absenMembers) {
-        const cleanTag = (m.member_tag || '').replace(/^@/, '').trim();
-        const username = cleanTag || (m.push_name ? m.push_name.trim() : m.phone);
-        const displayName = m.push_name || username;
+  for (const m of absenMembers) {
+    const cleanTag = (m.member_tag || '').replace(/^@/, '').trim();
+    const username = cleanTag || (m.push_name ? m.push_name.trim() : m.phone);
+    const displayName = m.push_name || username;
 
-        if (username) {
-            db.prepare(`
-                INSERT INTO giveaway_participants (username, nickname, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, wa_phone, is_eligible, is_tester, last_updated)
-                VALUES (?, ?, 1, 1, 1, 1, ?, ?, 1, 0, datetime('now'))
-                ON CONFLICT(username) DO UPDATE SET
-                    nickname = COALESCE(NULLIF(excluded.nickname, ''), giveaway_participants.nickname),
-                    has_followed = 1,
-                    has_shared = 1,
-                    has_commented = 1,
-                    has_wa_group = 1,
-                    is_eligible = 1,
-                    wa_member_tag = COALESCE(NULLIF(excluded.wa_member_tag, ''), giveaway_participants.wa_member_tag),
-                    wa_phone = excluded.wa_phone,
-                    last_updated = datetime('now')
-            `).run(username, displayName, cleanTag || username, m.phone);
-        }
+    if (username) {
+      addGiveawayParticipant(username, displayName, null, 1);
     }
+  }
 
-    // 2. Sinkronkan semua peserta real yang sudah terdaftar
-    const participants = db.prepare('SELECT username FROM giveaway_participants WHERE is_tester = 0').all() as { username: string }[];
-    for (const p of participants) {
-        syncParticipantWaStatus(p.username);
-    }
+  const realParticipants = getRealParticipants();
+  for (const p of realParticipants) {
+    syncParticipantWaStatus(p.username);
+  }
+}
+
+export function addGiveawayParticipant(
+  username: string,
+  nickname: string,
+  profilePicture?: string | null,
+  forceWaVerified = 0
+) {
+  const waCheck = checkUserInWaGroup(username);
+  const isValidWa = forceWaVerified ? 1 : (waCheck.found && waCheck.hasAbsen ? 1 : 0);
+  const nowIso = new Date().toISOString();
+
+  const existing = memoryParticipants.get(username);
+  const payload: GiveawayParticipant = {
+    username,
+    nickname: nickname || existing?.nickname || username,
+    profile_picture: profilePicture || existing?.profile_picture || null,
+    has_followed: 1,
+    has_liked: existing?.has_liked || 0,
+    has_shared: 1,
+    has_commented: 1,
+    has_wa_group: isValidWa,
+    wa_member_tag: waCheck.memberTag || existing?.wa_member_tag || username,
+    wa_phone: waCheck.phone || existing?.wa_phone || null,
+    is_eligible: isValidWa ? 1 : 0,
+    is_tester: 0,
+    registered_at: existing?.registered_at || nowIso,
+    last_updated: nowIso
+  };
+
+  memoryParticipants.set(username, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
+        INSERT INTO giveaway_participants (username, nickname, profile_picture, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, wa_phone, is_eligible, is_tester, last_updated)
+        VALUES (?, ?, ?, 1, 1, 1, ?, ?, ?, ?, 0, datetime('now'))
+        ON CONFLICT(username) DO UPDATE SET
+          nickname = excluded.nickname,
+          profile_picture = COALESCE(excluded.profile_picture, giveaway_participants.profile_picture),
+          has_wa_group = excluded.has_wa_group,
+          wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
+          wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
+          last_updated = datetime('now')
+      `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null, payload.is_eligible);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
+  computeEligibility(username);
 }
 
 export function updateGiveawayFollow(username: string, nickname: string, profilePicture?: string) {
-    const waCheck = checkUserInWaGroup(username);
-    const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
-    db.prepare(`
+  const waCheck = checkUserInWaGroup(username);
+  const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
+  const nowIso = new Date().toISOString();
+
+  const existing = memoryParticipants.get(username);
+  const payload: GiveawayParticipant = {
+    username,
+    nickname: nickname || existing?.nickname || username,
+    profile_picture: profilePicture || existing?.profile_picture || null,
+    has_followed: 1,
+    has_liked: existing?.has_liked || 0,
+    has_shared: existing?.has_shared || 0,
+    has_commented: existing?.has_commented || 0,
+    has_wa_group: isValidWa || existing?.has_wa_group || 0,
+    wa_member_tag: waCheck.memberTag || existing?.wa_member_tag || null,
+    wa_phone: waCheck.phone || existing?.wa_phone || null,
+    is_eligible: (isValidWa || existing?.has_wa_group) ? 1 : 0,
+    is_tester: 0,
+    registered_at: existing?.registered_at || nowIso,
+    last_updated: nowIso
+  };
+
+  memoryParticipants.set(username, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
         INSERT INTO giveaway_participants (username, nickname, profile_picture, has_followed, has_wa_group, wa_member_tag, wa_phone, is_tester, last_updated)
         VALUES (?, ?, ?, 1, ?, ?, ?, 0, datetime('now'))
         ON CONFLICT(username) DO UPDATE SET
-            nickname = excluded.nickname,
-            profile_picture = COALESCE(excluded.profile_picture, profile_picture),
-            has_followed = 1,
-            has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
-            wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
-            wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
-            last_updated = datetime('now')
-    `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
-    computeEligibility(username);
+          nickname = excluded.nickname,
+          profile_picture = COALESCE(excluded.profile_picture, giveaway_participants.profile_picture),
+          has_followed = 1,
+          has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
+          wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
+          wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
+          last_updated = datetime('now')
+      `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
+  computeEligibility(username);
 }
 
 export function updateGiveawayShare(username: string, nickname: string, profilePicture?: string) {
-    const waCheck = checkUserInWaGroup(username);
-    const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
-    db.prepare(`
+  const waCheck = checkUserInWaGroup(username);
+  const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
+  const nowIso = new Date().toISOString();
+
+  const existing = memoryParticipants.get(username);
+  const payload: GiveawayParticipant = {
+    username,
+    nickname: nickname || existing?.nickname || username,
+    profile_picture: profilePicture || existing?.profile_picture || null,
+    has_followed: existing?.has_followed || 0,
+    has_liked: existing?.has_liked || 0,
+    has_shared: 1,
+    has_commented: existing?.has_commented || 0,
+    has_wa_group: isValidWa || existing?.has_wa_group || 0,
+    wa_member_tag: waCheck.memberTag || existing?.wa_member_tag || null,
+    wa_phone: waCheck.phone || existing?.wa_phone || null,
+    is_eligible: (isValidWa || existing?.has_wa_group) ? 1 : 0,
+    is_tester: 0,
+    registered_at: existing?.registered_at || nowIso,
+    last_updated: nowIso
+  };
+
+  memoryParticipants.set(username, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
         INSERT INTO giveaway_participants (username, nickname, profile_picture, has_shared, has_wa_group, wa_member_tag, wa_phone, is_tester, last_updated)
         VALUES (?, ?, ?, 1, ?, ?, ?, 0, datetime('now'))
         ON CONFLICT(username) DO UPDATE SET
-            nickname = excluded.nickname,
-            profile_picture = COALESCE(excluded.profile_picture, profile_picture),
-            has_shared = 1,
-            has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
-            wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
-            wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
-            last_updated = datetime('now')
-    `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
-    computeEligibility(username);
+          nickname = excluded.nickname,
+          profile_picture = COALESCE(excluded.profile_picture, giveaway_participants.profile_picture),
+          has_shared = 1,
+          has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
+          wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
+          wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
+          last_updated = datetime('now')
+      `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
+  computeEligibility(username);
 }
 
 export function updateGiveawayComment(username: string, nickname: string, profilePicture?: string) {
-    const waCheck = checkUserInWaGroup(username);
-    const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
-    db.prepare(`
+  const waCheck = checkUserInWaGroup(username);
+  const isValidWa = waCheck.found && waCheck.hasAbsen ? 1 : 0;
+  const nowIso = new Date().toISOString();
+
+  const existing = memoryParticipants.get(username);
+  const payload: GiveawayParticipant = {
+    username,
+    nickname: nickname || existing?.nickname || username,
+    profile_picture: profilePicture || existing?.profile_picture || null,
+    has_followed: existing?.has_followed || 0,
+    has_liked: existing?.has_liked || 0,
+    has_shared: existing?.has_shared || 0,
+    has_commented: 1,
+    has_wa_group: isValidWa || existing?.has_wa_group || 0,
+    wa_member_tag: waCheck.memberTag || existing?.wa_member_tag || null,
+    wa_phone: waCheck.phone || existing?.wa_phone || null,
+    is_eligible: (isValidWa || existing?.has_wa_group) ? 1 : 0,
+    is_tester: 0,
+    registered_at: existing?.registered_at || nowIso,
+    last_updated: nowIso
+  };
+
+  memoryParticipants.set(username, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
         INSERT INTO giveaway_participants (username, nickname, profile_picture, has_commented, has_wa_group, wa_member_tag, wa_phone, is_tester, last_updated)
         VALUES (?, ?, ?, 1, ?, ?, ?, 0, datetime('now'))
         ON CONFLICT(username) DO UPDATE SET
-            nickname = excluded.nickname,
-            profile_picture = COALESCE(excluded.profile_picture, profile_picture),
-            has_commented = 1,
-            has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
-            wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
-            wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
-            last_updated = datetime('now')
-    `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
-    computeEligibility(username);
+          nickname = excluded.nickname,
+          profile_picture = COALESCE(excluded.profile_picture, giveaway_participants.profile_picture),
+          has_commented = 1,
+          has_wa_group = CASE WHEN excluded.has_wa_group = 1 THEN 1 ELSE giveaway_participants.has_wa_group END,
+          wa_member_tag = COALESCE(excluded.wa_member_tag, giveaway_participants.wa_member_tag),
+          wa_phone = COALESCE(excluded.wa_phone, giveaway_participants.wa_phone),
+          last_updated = datetime('now')
+      `).run(username, nickname, profilePicture || null, isValidWa, waCheck.memberTag || null, waCheck.phone || null);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
+  computeEligibility(username);
 }
 
 // ── Real participants (is_tester = 0) ──────────────────────────────
 export function getRealParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 0 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 0 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values())
+    .filter(p => !p.is_tester)
+    .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
 }
 
 export function getEligibleRealParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 0 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 0 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values())
+    .filter(p => !p.is_tester && p.is_eligible === 1)
+    .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
 }
 
 export function resetRealGiveawayData() {
-    db.prepare('DELETE FROM giveaway_participants WHERE is_tester = 0').run();
+  for (const [k, v] of memoryParticipants.entries()) {
+    if (!v.is_tester) memoryParticipants.delete(k);
+  }
+  if (db) {
+    try {
+      db.prepare('DELETE FROM giveaway_participants WHERE is_tester = 0').run();
+    } catch {}
+  }
+  Promise.resolve(supabaseAdmin.from('giveaway_participants').delete().eq('is_tester', 0)).catch(() => {});
 }
 
 // ── Tester participants (is_tester = 1) ───────────────────────────
 export function getTesterParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 1 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants WHERE is_tester = 1 ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values())
+    .filter(p => !!p.is_tester)
+    .sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
 }
 
 export function getEligibleTesterParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 AND is_tester = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values())
+    .filter(p => !!p.is_tester && p.is_eligible === 1)
+    .sort((a, b) => (a.registered_at || '').localeCompare(b.registered_at || ''));
 }
 
 export function addGiveawayTester(username: string, nickname: string) {
-    db.prepare(`
+  const nowIso = new Date().toISOString();
+  const payload: GiveawayParticipant = {
+    username,
+    nickname,
+    profile_picture: null,
+    has_followed: 1,
+    has_liked: 0,
+    has_shared: 1,
+    has_commented: 1,
+    has_wa_group: 1,
+    wa_member_tag: username.replace(/^_tester_/, ''),
+    wa_phone: null,
+    is_eligible: 1,
+    is_tester: 1,
+    registered_at: nowIso,
+    last_updated: nowIso
+  };
+
+  memoryParticipants.set(username, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
         INSERT INTO giveaway_participants (username, nickname, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, is_eligible, is_tester, last_updated)
         VALUES (?, ?, 1, 1, 1, 1, ?, 1, 1, datetime('now'))
         ON CONFLICT(username) DO UPDATE SET
-            nickname = excluded.nickname,
-            has_followed = 1,
-            has_shared = 1,
-            has_commented = 1,
-            has_wa_group = 1,
-            wa_member_tag = excluded.wa_member_tag,
-            is_eligible = 1,
-            is_tester = 1,
-            last_updated = datetime('now')
-    `).run(username, nickname, username.replace(/^_tester_/, ''));
+          nickname = excluded.nickname,
+          has_followed = 1,
+          has_shared = 1,
+          has_commented = 1,
+          has_wa_group = 1,
+          wa_member_tag = excluded.wa_member_tag,
+          is_eligible = 1,
+          is_tester = 1,
+          last_updated = datetime('now')
+      `).run(username, nickname, username.replace(/^_tester_/, ''));
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
 }
 
 export function resetTesterData() {
-    db.prepare('DELETE FROM giveaway_participants WHERE is_tester = 1').run();
+  for (const [k, v] of memoryParticipants.entries()) {
+    if (v.is_tester) memoryParticipants.delete(k);
+  }
+  if (db) {
+    try {
+      db.prepare('DELETE FROM giveaway_participants WHERE is_tester = 1').run();
+    } catch {}
+  }
+  Promise.resolve(supabaseAdmin.from('giveaway_participants').delete().eq('is_tester', 1)).catch(() => {});
 }
 
 // ── Generic ──────────────────────────────────────────────────────
 export function removeGiveawayParticipant(username: string) {
-    db.prepare('DELETE FROM giveaway_participants WHERE username = ?').run(username);
+  memoryParticipants.delete(username);
+  if (db) {
+    try {
+      db.prepare('DELETE FROM giveaway_participants WHERE username = ?').run(username);
+    } catch {}
+  }
+  safeSupabaseDelete('giveaway_participants', 'username', username);
 }
 
 export function resetGiveawayData() {
-    db.prepare('DELETE FROM giveaway_participants').run();
+  memoryParticipants.clear();
+  if (db) {
+    try {
+      db.prepare('DELETE FROM giveaway_participants').run();
+    } catch {}
+  }
+  Promise.resolve(supabaseAdmin.from('giveaway_participants').delete().neq('username', '')).catch(() => {});
 }
 
-// Legacy aliases kept for compatibility
 export function getGiveawayParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants ORDER BY last_updated DESC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values()).sort((a, b) => (b.last_updated || '').localeCompare(a.last_updated || ''));
 }
 
 export function getEligibleParticipants(): GiveawayParticipant[] {
-    return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+  if (db) {
+    try {
+      return db.prepare('SELECT * FROM giveaway_participants WHERE is_eligible = 1 ORDER BY registered_at ASC').all() as GiveawayParticipant[];
+    } catch {}
+  }
+  return Array.from(memoryParticipants.values()).filter(p => p.is_eligible === 1);
 }
 
-export function toggleGiveawayRequirement(username: string, field: 'has_followed' | 'has_shared' | 'has_commented' | 'has_wa_group', value: number) {
-    db.prepare(`
+export function toggleGiveawayRequirement(
+  username: string,
+  field: 'has_followed' | 'has_shared' | 'has_commented' | 'has_wa_group',
+  value: number
+) {
+  const p = memoryParticipants.get(username);
+  if (p) {
+    (p as any)[field] = value;
+    p.last_updated = new Date().toISOString();
+    memoryParticipants.set(username, p);
+    safeSupabaseUpsert('giveaway_participants', {
+      username,
+      [field]: value,
+      last_updated: p.last_updated
+    });
+  }
+
+  if (db) {
+    try {
+      db.prepare(`
         UPDATE giveaway_participants 
         SET ${field} = ?, last_updated = datetime('now') 
         WHERE username = ?
-    `).run(value, username);
-    computeEligibility(username);
+      `).run(value, username);
+    } catch {}
+  }
+
+  computeEligibility(username);
 }
 
 export function setGiveawayVideoUrl(url: string) {
-    setSetting('giveaway_video_url', url);
+  setSetting('giveaway_video_url', url);
 }
 
 export function getGiveawayVideoUrl(): string {
-    return getSetting('giveaway_video_url', '');
+  return getSetting('giveaway_video_url', '');
 }
 
 // ==========================================
 // WHATSAPP GROUP MEMBERS REPOSITORY
 // ==========================================
-export interface WaMemberRecord {
-    group_jid: string;
-    jid: string;
-    phone: string;
-    member_tag: string;
-    push_name: string;
-    role?: string;
-}
-
 export function saveWaGroupMembers(members: WaMemberRecord[]) {
-    const insertStmt = db.prepare(`
-        INSERT INTO wa_group_members (group_jid, jid, phone, member_tag, push_name, role, last_seen)
-        VALUES (@group_jid, @jid, @phone, @member_tag, @push_name, @role, datetime('now'))
+  const nowIso = new Date().toISOString();
+
+  for (const item of members) {
+    const key = `${item.group_jid}_${item.jid}`;
+    const existing = memoryWaMembers.get(key);
+    const updated: WaMemberRecord = {
+      group_jid: item.group_jid,
+      jid: item.jid,
+      phone: item.phone || existing?.phone || '',
+      member_tag: item.member_tag || existing?.member_tag || '',
+      push_name: item.push_name || existing?.push_name || '',
+      role: item.role || existing?.role || 'member',
+      has_absen: item.has_absen !== undefined ? item.has_absen : (existing?.has_absen || 0),
+      absen_at: item.absen_at || existing?.absen_at || null,
+      last_seen: nowIso,
+    };
+    memoryWaMembers.set(key, updated);
+    safeSupabaseUpsert('wa_group_members', updated);
+  }
+
+  if (db) {
+    try {
+      const insertStmt = db.prepare(`
+        INSERT INTO wa_group_members (group_jid, jid, phone, member_tag, push_name, role, has_absen, absen_at, last_seen)
+        VALUES (@group_jid, @jid, @phone, @member_tag, @push_name, @role, @has_absen, @absen_at, datetime('now'))
         ON CONFLICT(group_jid, jid) DO UPDATE SET
-            phone = excluded.phone,
-            member_tag = COALESCE(NULLIF(excluded.member_tag, ''), wa_group_members.member_tag),
-            push_name = COALESCE(NULLIF(excluded.push_name, ''), wa_group_members.push_name),
-            role = COALESCE(NULLIF(excluded.role, ''), wa_group_members.role),
-            last_seen = datetime('now')
-    `);
+          phone = excluded.phone,
+          member_tag = COALESCE(NULLIF(excluded.member_tag, ''), wa_group_members.member_tag),
+          push_name = COALESCE(NULLIF(excluded.push_name, ''), wa_group_members.push_name),
+          role = COALESCE(NULLIF(excluded.role, ''), wa_group_members.role),
+          has_absen = MAX(excluded.has_absen, wa_group_members.has_absen),
+          absen_at = COALESCE(excluded.absen_at, wa_group_members.absen_at),
+          last_seen = datetime('now')
+      `);
 
-    const insertMany = db.transaction((items: WaMemberRecord[]) => {
+      const insertMany = db.transaction((items: WaMemberRecord[]) => {
         for (const item of items) {
-            insertStmt.run(item);
+          insertStmt.run({
+            group_jid: item.group_jid,
+            jid: item.jid,
+            phone: item.phone || '',
+            member_tag: item.member_tag || '',
+            push_name: item.push_name || '',
+            role: item.role || 'member',
+            has_absen: item.has_absen || 0,
+            absen_at: item.absen_at || null,
+          });
         }
-    });
+      });
 
-    insertMany(members);
-    // After saving WA members, automatically re-sync participants status
-    syncAllParticipantsWithWa();
+      insertMany(members);
+    } catch (err: any) {
+      console.warn('[DB] SQLite saveWaGroupMembers error:', err?.message || err);
+    }
+  }
+
+  // After saving WA members, automatically re-sync participants status
+  syncAllParticipantsWithWa();
 }
 
 export function getWaGroupMembers(groupJid?: string): WaMemberRecord[] {
-    if (groupJid) {
+  if (db) {
+    try {
+      if (groupJid) {
         return db.prepare('SELECT * FROM wa_group_members WHERE group_jid = ? ORDER BY member_tag ASC, push_name ASC').all(groupJid) as WaMemberRecord[];
-    }
-    return db.prepare('SELECT * FROM wa_group_members ORDER BY last_seen DESC').all() as WaMemberRecord[];
+      }
+      return db.prepare('SELECT * FROM wa_group_members ORDER BY last_seen DESC').all() as WaMemberRecord[];
+    } catch {}
+  }
+
+  const all = Array.from(memoryWaMembers.values());
+  if (groupJid) {
+    return all.filter(m => m.group_jid === groupJid).sort((a, b) => (a.member_tag || '').localeCompare(b.member_tag || ''));
+  }
+  return all.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
 }
 
 export function clearWaGroupMembers(groupJid?: string) {
-    if (groupJid) {
-        db.prepare('DELETE FROM wa_group_members WHERE group_jid = ?').run(groupJid);
-    } else {
-        db.prepare('DELETE FROM wa_group_members').run();
+  if (groupJid) {
+    for (const [k, v] of memoryWaMembers.entries()) {
+      if (v.group_jid === groupJid) memoryWaMembers.delete(k);
     }
-    syncAllParticipantsWithWa();
+    safeSupabaseDelete('wa_group_members', 'group_jid', groupJid);
+    if (db) {
+      try {
+        db.prepare('DELETE FROM wa_group_members WHERE group_jid = ?').run(groupJid);
+      } catch {}
+    }
+  } else {
+    memoryWaMembers.clear();
+    Promise.resolve(supabaseAdmin.from('wa_group_members').delete().neq('jid', '')).catch(() => {});
+    if (db) {
+      try {
+        db.prepare('DELETE FROM wa_group_members').run();
+      } catch {}
+    }
+  }
+  syncAllParticipantsWithWa();
 }
 
 export function getDuplicateUsernames(groupJid?: string): { member_tag: string; count: number; members: WaMemberRecord[] }[] {
-    const targetGroup = groupJid || getTargetWaGroup();
-    let query = `
-        SELECT LOWER(TRIM(REPLACE(member_tag, '@', ''))) as clean_tag, COUNT(*) as count
-        FROM wa_group_members
-        WHERE member_tag IS NOT NULL AND TRIM(member_tag) != ''
-    `;
-    const params: any[] = [];
-    if (targetGroup) {
-        query += ` AND group_jid = ?`;
-        params.push(targetGroup);
-    }
-    query += ` GROUP BY clean_tag HAVING count > 1`;
+  const members = getWaGroupMembers(groupJid);
+  const tagMap = new Map<string, WaMemberRecord[]>();
 
-    const dupRows = db.prepare(query).all(...params) as { clean_tag: string; count: number }[];
-    return dupRows.map(row => {
-        let mQuery = `
-            SELECT * FROM wa_group_members 
-            WHERE LOWER(TRIM(REPLACE(member_tag, '@', ''))) = ?
-        `;
-        const mParams: any[] = [row.clean_tag];
-        if (targetGroup) {
-            mQuery += ` AND group_jid = ?`;
-            mParams.push(targetGroup);
-        }
-        const members = db.prepare(mQuery).all(...mParams) as WaMemberRecord[];
-        return {
-            member_tag: row.clean_tag,
-            count: row.count,
-            members,
-        };
-    });
+  for (const m of members) {
+    const cleanTag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
+    if (!cleanTag) continue;
+    const list = tagMap.get(cleanTag) || [];
+    list.push(m);
+    tagMap.set(cleanTag, list);
+  }
+
+  const duplicates: { member_tag: string; count: number; members: WaMemberRecord[] }[] = [];
+  for (const [tag, list] of tagMap.entries()) {
+    if (list.length > 1) {
+      duplicates.push({
+        member_tag: tag,
+        count: list.length,
+        members: list,
+      });
+    }
+  }
+
+  return duplicates;
 }

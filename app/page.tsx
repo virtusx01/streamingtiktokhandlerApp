@@ -208,10 +208,10 @@ export default function Home() {
       if (data.is_live !== undefined) {
         setIsLive(Boolean(data.is_live));
       }
-      if (data.connected !== undefined && data.connected) {
-        setListenerConnected(true);
+      if (data.connected !== undefined) {
+        setListenerConnected(Boolean(data.connected));
       }
-      if (data.statusText && !listenerDetail) {
+      if (data.statusText) {
         setListenerDetail(data.statusText);
       }
     } catch (err) {

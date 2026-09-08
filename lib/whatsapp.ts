@@ -10,11 +10,29 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
-import { saveWaGroupMembers, getSetting, setSetting, recordAbsenMessage, isWithinAbsenPeriod } from './db';
+import os from 'os';
+import { saveWaGroupMembers, getWaGroupMembers, getSetting, setSetting, recordAbsenMessage, isWithinAbsenPeriod, syncAllParticipantsWithWa } from './db';
 
-const SESSION_DIR = path.join(process.cwd(), 'data', 'wa_session');
-if (!fs.existsSync(SESSION_DIR)) {
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
+function getSessionDir(): string {
+    const localDir = path.join(process.cwd(), 'data', 'wa_session');
+    try {
+        if (!fs.existsSync(localDir)) {
+            fs.mkdirSync(localDir, { recursive: true });
+        }
+        // Verify write access
+        const testFile = path.join(localDir, '.write_test');
+        fs.writeFileSync(testFile, '1');
+        fs.unlinkSync(testFile);
+        return localDir;
+    } catch {
+        const tmpDir = path.join(os.tmpdir(), 'wa_session');
+        try {
+            if (!fs.existsSync(tmpDir)) {
+                fs.mkdirSync(tmpDir, { recursive: true });
+            }
+        } catch {}
+        return tmpDir;
+    }
 }
 
 export type WAConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'SCAN_QR' | 'CONNECTED';
@@ -32,6 +50,7 @@ interface WAState {
 const globalForWA = global as unknown as {
     waState?: WAState;
     waInitPromise?: Promise<WASocket> | null;
+    waSyncHeartbeat?: NodeJS.Timeout | null;
 };
 
 const waState: WAState = globalForWA.waState || {
@@ -49,6 +68,48 @@ globalForWA.waState = waState;
 const logger = pino({ level: 'silent' });
 
 export function getWAStatus() {
+    // 1. If currently connected in this local process
+    if (waState.status === 'CONNECTED') {
+        // Sync heartbeat to database so cloud/serverless views see active connection
+        setSetting('wa_status', 'CONNECTED');
+        if (waState.phoneNumber) setSetting('wa_phone', waState.phoneNumber);
+        if (waState.userName) setSetting('wa_user_name', waState.userName);
+        setSetting('wa_last_seen', String(Date.now()));
+
+        return {
+            status: waState.status,
+            qrCodeUrl: waState.qrCodeUrl,
+            phoneNumber: waState.phoneNumber,
+            userName: waState.userName,
+            lastError: waState.lastError,
+        };
+    }
+
+    if (waState.status === 'SCAN_QR' && waState.qrCodeUrl) {
+        return {
+            status: waState.status,
+            qrCodeUrl: waState.qrCodeUrl,
+            phoneNumber: waState.phoneNumber,
+            userName: waState.userName,
+            lastError: waState.lastError,
+        };
+    }
+
+    // 2. Fallback to Supabase / synced settings (e.g. if running in cloud / Netlify)
+    const syncedStatus = getSetting('wa_status', '');
+    const syncedPhone = getSetting('wa_phone', '');
+    const syncedUser = getSetting('wa_user_name', '');
+
+    if (syncedStatus === 'CONNECTED' && syncedPhone) {
+        return {
+            status: 'CONNECTED' as WAConnectionStatus,
+            qrCodeUrl: null,
+            phoneNumber: syncedPhone,
+            userName: syncedUser || 'WhatsApp Bot',
+            lastError: null,
+        };
+    }
+
     return {
         status: waState.status,
         qrCodeUrl: waState.qrCodeUrl,
@@ -67,12 +128,14 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
         return globalForWA.waInitPromise;
     }
 
+    const sessionDir = getSessionDir();
+
     globalForWA.waInitPromise = (async () => {
         try {
             waState.status = 'CONNECTING';
             waState.lastError = null;
 
-            const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+            const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
             const { version } = await fetchLatestBaileysVersion();
 
             const sock = makeWASocket({
@@ -119,8 +182,12 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
 
                     if (statusCode === DisconnectReason.loggedOut) {
                         try {
-                            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+                            fs.rmSync(sessionDir, { recursive: true, force: true });
                         } catch {}
+                        setSetting('wa_status', 'DISCONNECTED');
+                        setSetting('wa_phone', '');
+                        setSetting('wa_user_name', '');
+                        setSetting('wa_participating_groups', '[]');
                     } else if (shouldReconnect) {
                         setTimeout(() => initWhatsApp(true), 5000);
                     }
@@ -132,8 +199,25 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                     waState.phoneNumber = sock.user?.id ? sock.user.id.split(':')[0] : null;
                     waState.userName = sock.user?.name || null;
 
-                    // Automatically sync groups
-                    setTimeout(() => {
+                    // Sync to cloud / settings table
+                    setSetting('wa_status', 'CONNECTED');
+                    if (waState.phoneNumber) setSetting('wa_phone', waState.phoneNumber);
+                    if (waState.userName) setSetting('wa_user_name', waState.userName);
+                    setSetting('wa_last_seen', String(Date.now()));
+
+                    // Automatically fetch and sync participating groups to cloud
+                    setTimeout(async () => {
+                        try {
+                            const groups = await sock.groupFetchAllParticipating();
+                            const groupList = Object.values(groups).map((g: GroupMetadata) => ({
+                                id: g.id,
+                                subject: g.subject,
+                                size: g.participants?.length || 0,
+                            }));
+                            setSetting('wa_participating_groups', JSON.stringify(groupList));
+                        } catch (e) {
+                            console.warn('[WA] Could not fetch participating groups at startup:', e);
+                        }
                         syncSelectedGroupMembers().catch(e => console.error('[WA] Auto sync error:', e));
                     }, 3000);
                 }
@@ -163,7 +247,7 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                     ''
                 ).trim();
 
-                // Periksa jika user mengetik username / tag di chat (contoh: "absen @ilvy0uv" atau "@ilvy0uv absen" atau format nama di pushName)
+                // Periksa jika user mengetik username / tag di chat (contoh: "absen @ilvy0uv" atau "@ilvy0uv absen")
                 if (!memberTag) {
                     const tagMatch = messageBody.match(/@([a-zA-Z0-9._]+)/);
                     if (tagMatch) {
@@ -233,7 +317,8 @@ export async function disconnectWhatsApp() {
         }
     } catch {}
     try {
-        fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+        const sessionDir = getSessionDir();
+        fs.rmSync(sessionDir, { recursive: true, force: true });
     } catch {}
     waState.sock = null;
     waState.status = 'DISCONNECTED';
@@ -241,54 +326,84 @@ export async function disconnectWhatsApp() {
     waState.phoneNumber = null;
     waState.userName = null;
     globalForWA.waInitPromise = null;
+
+    setSetting('wa_status', 'DISCONNECTED');
+    setSetting('wa_phone', '');
+    setSetting('wa_user_name', '');
+    setSetting('wa_participating_groups', '[]');
 }
 
 export async function getParticipatingGroups(): Promise<{ id: string; subject: string; size: number }[]> {
-    if (!waState.sock || waState.status !== 'CONNECTED') {
-        return [];
+    if (waState.sock && waState.status === 'CONNECTED') {
+        try {
+            const groups = await waState.sock.groupFetchAllParticipating();
+            const groupList = Object.values(groups).map((g: GroupMetadata) => ({
+                id: g.id,
+                subject: g.subject,
+                size: g.participants?.length || 0,
+            }));
+            setSetting('wa_participating_groups', JSON.stringify(groupList));
+            return groupList;
+        } catch (e) {
+            console.error('[WA] Error fetching participating groups from socket:', e);
+        }
     }
+
+    // Fallback: load cached groups from Supabase settings
     try {
-        const groups = await waState.sock.groupFetchAllParticipating();
-        return Object.values(groups).map((g: GroupMetadata) => ({
-            id: g.id,
-            subject: g.subject,
-            size: g.participants?.length || 0,
-        }));
-    } catch (e) {
-        console.error('[WA] Error fetching participating groups:', e);
-        return [];
+        const cached = getSetting('wa_participating_groups', '');
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+            }
+        }
+    } catch {}
+
+    // Fallback 2: if target group exists, construct a placeholder item so user can select/see it
+    const targetGroup = getSetting('giveaway_target_wa_group', '');
+    if (targetGroup) {
+        return [{ id: targetGroup, subject: 'Grup WhatsApp Komunitas Utama', size: 0 }];
     }
+
+    return [];
 }
 
 export async function syncGroupMembers(groupJid: string) {
-    if (!waState.sock || waState.status !== 'CONNECTED') {
-        throw new Error('WhatsApp belum terhubung');
+    // If local socket is active, fetch live participants from WhatsApp server
+    if (waState.sock && waState.status === 'CONNECTED') {
+        const metadata: GroupMetadata = await waState.sock.groupMetadata(groupJid);
+        if (!metadata || !metadata.participants) {
+            return { count: 0 };
+        }
+
+        const membersToSave = metadata.participants.map((p: any) => {
+            const phone = p.id ? p.id.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0] : '';
+            const memberTag = p.memberTag || p.member_tag || p.tag || p.role_tag || '';
+            const pushName = p.name || p.pushName || '';
+            const role = p.admin ? (p.admin === 'superadmin' ? 'creator' : 'admin') : 'member';
+
+            return {
+                group_jid: groupJid,
+                jid: p.id,
+                phone,
+                member_tag: memberTag,
+                push_name: pushName,
+                role,
+            };
+        });
+
+        saveWaGroupMembers(membersToSave);
+        return { count: membersToSave.length, groupName: metadata.subject };
     }
 
-    const metadata: GroupMetadata = await waState.sock.groupMetadata(groupJid);
-    if (!metadata || !metadata.participants) {
-        return { count: 0 };
-    }
-
-    const membersToSave = metadata.participants.map((p: any) => {
-        const phone = p.id ? p.id.replace('@s.whatsapp.net', '').split(':')[0] : '';
-        // In WhatsApp protobuff / raw node, memberTag can be in memberTag, member_tag, or custom attribute
-        const memberTag = p.memberTag || p.member_tag || p.tag || p.role_tag || '';
-        const pushName = p.name || p.pushName || '';
-        const role = p.admin ? (p.admin === 'superadmin' ? 'creator' : 'admin') : 'member';
-
-        return {
-            group_jid: groupJid,
-            jid: p.id,
-            phone,
-            member_tag: memberTag,
-            push_name: pushName,
-            role,
-        };
-    });
-
-    saveWaGroupMembers(membersToSave);
-    return { count: membersToSave.length, groupName: metadata.subject };
+    // Cloud / serverless fallback: re-sync all existing members with giveaway participants
+    syncAllParticipantsWithWa();
+    const existingMembers = getWaGroupMembers(groupJid);
+    return {
+        count: existingMembers.length,
+        groupName: 'Grup WhatsApp Komunitas',
+    };
 }
 
 export async function syncSelectedGroupMembers() {

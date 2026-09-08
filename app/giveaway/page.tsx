@@ -952,13 +952,14 @@ export default function GiveawayPage() {
       });
       const data = await res.json();
       if (data.success) {
-        showToast('Memulai koneksi WhatsApp, silakan tunggu...');
+        showToast(data.message || 'Memulai koneksi WhatsApp, silakan tunggu...');
         fetchWaStatus();
+        fetchWaSettingsAndGroups();
       } else {
-        showToast(data.error || 'Gagal memulai koneksi', 'error');
+        showToast(data.error || 'Gagal memulai koneksi WhatsApp', 'error');
       }
-    } catch {
-      showToast('Gagal terhubung ke WhatsApp', 'error');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal terhubung ke server WhatsApp', 'error');
     } finally {
       setWaActionLoading(false);
     }

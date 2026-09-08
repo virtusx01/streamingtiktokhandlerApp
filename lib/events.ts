@@ -7,10 +7,7 @@ const globalWithEmitter = global as typeof globalThis & {
 };
 
 const eventEmitter = globalWithEmitter.__tiktok_emitter || new EventEmitter();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalWithEmitter.__tiktok_emitter = eventEmitter;
-}
+globalWithEmitter.__tiktok_emitter = eventEmitter;
 
 eventEmitter.setMaxListeners(100);
 
