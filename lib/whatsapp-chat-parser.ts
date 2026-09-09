@@ -303,20 +303,31 @@ export function processImportedChat(
       const cleanContact = contactName.toLowerCase();
       const cleanAlpha = cleanContact.replace(/[^a-z0-9]/g, '');
 
+      // 1. Coba exact match push_name, phone, atau member_tag
       matchedMember = groupMembers.find(m => {
         const mPush = (m.push_name || '').replace(/^[~@]/, '').trim().toLowerCase();
-        const mPushAlpha = mPush.replace(/[^a-z0-9]/g, '');
         const mTag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
-
-        // Cocokkan exact push_name atau member_tag
-        if (mPush === cleanContact || mTag === cleanContact) return true;
-        // Cocokkan tanpa emoji / karakter khusus
-        if (cleanAlpha && cleanAlpha.length >= 3 && mPushAlpha === cleanAlpha) return true;
-        // Cocokkan sebagian (substring) jika nama cukup panjang
-        if (cleanAlpha.length >= 4 && (mPushAlpha.includes(cleanAlpha) || cleanAlpha.includes(mPushAlpha))) return true;
-
-        return false;
+        return mPush === cleanContact || mTag === cleanContact;
       });
+
+      // 2. Coba strip emoji / non-alphanumeric match
+      if (!matchedMember && cleanAlpha && cleanAlpha.length >= 2) {
+        matchedMember = groupMembers.find(m => {
+          const mPushAlpha = (m.push_name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const mTagAlpha = (m.member_tag || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          return mPushAlpha === cleanAlpha || mTagAlpha === cleanAlpha;
+        });
+      }
+
+      // 3. Coba substring match jika nama cukup panjang
+      if (!matchedMember && cleanAlpha && cleanAlpha.length >= 3) {
+        matchedMember = groupMembers.find(m => {
+          const mPushAlpha = (m.push_name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const mTagAlpha = (m.member_tag || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          return (mPushAlpha && (mPushAlpha.includes(cleanAlpha) || cleanAlpha.includes(mPushAlpha))) ||
+                 (mTagAlpha && (mTagAlpha.includes(cleanAlpha) || cleanAlpha.includes(mTagAlpha)));
+        });
+      }
     }
 
     if (matchedMember) {
@@ -332,15 +343,7 @@ export function processImportedChat(
       finalMemberTag = tagFromMsg.trim().toLowerCase();
     }
 
-    // B. Cek apakah pengirim pernah mengirimkan tag TikTok di pesan LAIN dalam chat log yang sama (Two-pass parser)
-    if (!finalMemberTag) {
-      const tagFromHistory = senderDiscoveredTags.get(senderKey) || (senderDigits ? senderDiscoveredTags.get(senderDigits) : undefined);
-      if (tagFromHistory && isValidTikTokUsername(tagFromHistory)) {
-        finalMemberTag = tagFromHistory;
-      }
-    }
-
-    // C. Jika tidak ada di pesan, gunakan member tag yang sudah tersimpan di data grup WhatsApp
+    // B. Ambil member tag yang sudah tersimpan di data grup WhatsApp untuk member ini
     if (!finalMemberTag && matchedMember && matchedMember.member_tag) {
       const existingTag = matchedMember.member_tag.replace(/^@/, '').trim().toLowerCase();
       if (existingTag && !/^\d{10,}$/.test(existingTag) && isValidTikTokUsername(existingTag)) {
@@ -348,7 +351,34 @@ export function processImportedChat(
       }
     }
 
-    // D. Cek apakah nomor telepon pengirim cocok dengan peserta giveaway TikTok yang tersimpan di DB
+    // C. Cek apakah pengirim pernah mengirimkan tag TikTok di pesan LAIN dalam chat log yang sama (Two-pass parser)
+    if (!finalMemberTag) {
+      const tagFromHistory = senderDiscoveredTags.get(senderKey) || (senderDigits ? senderDiscoveredTags.get(senderDigits) : undefined);
+      if (tagFromHistory && isValidTikTokUsername(tagFromHistory)) {
+        finalMemberTag = tagFromHistory;
+      }
+    }
+
+    // D. Cek apakah nomor telepon pengirim cocok dengan member_tag yang ada di data grup anggota lainnya
+    if (!finalMemberTag && (normalizedPhone || matchedMember?.phone)) {
+      const targetPhone = (normalizedPhone || matchedMember?.phone || '').replace(/\D/g, '');
+      if (targetPhone.length >= 7) {
+        const phoneMatchMember = groupMembers.find(m => {
+          const mPhone = (m.phone || '').replace(/\D/g, '');
+          const mJid = (m.jid || '').split('@')[0].replace(/\D/g, '');
+          return (mPhone && (mPhone === targetPhone || mPhone.endsWith(targetPhone.slice(-8)))) ||
+                 (mJid && !m.jid.endsWith('@lid') && (mJid === targetPhone || mJid.endsWith(targetPhone.slice(-8))));
+        });
+        if (phoneMatchMember && phoneMatchMember.member_tag) {
+          const cTag = phoneMatchMember.member_tag.replace(/^@/, '').trim().toLowerCase();
+          if (isValidTikTokUsername(cTag) && !/^\d{10,}$/.test(cTag)) {
+            finalMemberTag = cTag;
+          }
+        }
+      }
+    }
+
+    // E. Cek apakah nomor telepon pengirim cocok dengan peserta giveaway TikTok yang tersimpan di DB
     if (!finalMemberTag && (normalizedPhone || matchedMember?.phone)) {
       const targetPhone = (normalizedPhone || matchedMember?.phone || '').replace(/\D/g, '');
       if (targetPhone.length >= 7) {
@@ -363,7 +393,7 @@ export function processImportedChat(
       }
     }
 
-    // E. Jika masih belum ada, HANYA gunakan nama kontak pengirim jika COCOK dengan peserta giveaway yang terdaftar
+    // F. Jika masih belum ada, gunakan nama kontak pengirim jika COCOK dengan peserta giveaway yang terdaftar
     if (!finalMemberTag && contactName) {
       const cleanNameAsTag = contactName.replace(/[^a-zA-Z0-9._]/g, '').trim().toLowerCase();
       if (isValidTikTokUsername(cleanNameAsTag)) {

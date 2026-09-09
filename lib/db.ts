@@ -1306,21 +1306,40 @@ export function saveWaGroupMembers(members: WaMemberRecord[]) {
 }
 
 export function getWaGroupMembers(groupJid?: string): WaMemberRecord[] {
+  // 1. Ambil dari SQLite jika ada (karena SQLite menyimpan data paling persisten dan lengkap)
+  let dbRows: WaMemberRecord[] = [];
+  if (db) {
+    try {
+      if (groupJid) {
+        dbRows = db.prepare('SELECT * FROM wa_group_members WHERE group_jid = ? ORDER BY member_tag ASC, push_name ASC').all(groupJid) as WaMemberRecord[];
+      } else {
+        dbRows = db.prepare('SELECT * FROM wa_group_members ORDER BY last_seen DESC').all() as WaMemberRecord[];
+      }
+    } catch {}
+  }
+
+  // 2. Jika SQLite mengembalikan data, sinkronkan ke memoryWaMembers dan return
+  if (dbRows.length > 0) {
+    for (const r of dbRows) {
+      const key = `${r.group_jid}_${r.jid}`;
+      const mem = memoryWaMembers.get(key);
+      memoryWaMembers.set(key, {
+        ...r,
+        member_tag: r.member_tag || mem?.member_tag || '',
+        phone: r.phone || mem?.phone || '',
+        push_name: r.push_name || mem?.push_name || '',
+      });
+    }
+    return dbRows;
+  }
+
+  // 3. Fallback jika SQLite kosong (misal di cloud tanpa file db), ambil dari memory
   const all = Array.from(memoryWaMembers.values());
   if (all.length > 0) {
     if (groupJid) {
       return all.filter(m => m.group_jid === groupJid).sort((a, b) => (a.member_tag || '').localeCompare(b.member_tag || ''));
     }
     return all.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
-  }
-
-  if (db) {
-    try {
-      if (groupJid) {
-        return db.prepare('SELECT * FROM wa_group_members WHERE group_jid = ? ORDER BY member_tag ASC, push_name ASC').all(groupJid) as WaMemberRecord[];
-      }
-      return db.prepare('SELECT * FROM wa_group_members ORDER BY last_seen DESC').all() as WaMemberRecord[];
-    } catch {}
   }
 
   return [];
