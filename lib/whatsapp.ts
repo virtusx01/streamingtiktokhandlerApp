@@ -15,9 +15,13 @@ import { saveWaGroupMembers, getWaGroupMembers, getSetting, setSetting, recordAb
 
 const WA_STOP_WORDS = new Set([
     'min', 'admin', 'bang', 'kak', 'ya', 'dong', 'hadir', 'absen', 'om', 'bro', 'mas', 'gan', 
-    'dan', 'ini', 'dulu', 'pak', 'gais', 'guys', 'halo', 'pagi', 'siang', 'sore', 'malam', 
+    'dan', 'ini', 'itu', 'dulu', 'pak', 'gais', 'guys', 'halo', 'pagi', 'siang', 'sore', 'malam', 
     'virtus', 'onlyvirtus', 'giveaway', 'live', 'ikut', 'ikutan', 'nih', 'ok', 'oke', 'gas', 
-    'siap', 'sudah', 'udah', 'terima', 'kasih', 'kakak', 'saya', 'ku', 'bisa', 'banget'
+    'siap', 'sudah', 'udah', 'terima', 'kasih', 'kakak', 'saya', 'ku', 'bisa', 'banget',
+    'ha', 'he', 'ho', 'wkwk', 'wkwkwk', 'haha', 'hahaha', 'er', 'mem', 'waduh', 'waduhhh', 'waduhh',
+    'discord', 'dc', 'wa', 'whatsapp', 'ig', 'instagram', 'fb', 'facebook', 'yt', 'youtube',
+    'gk', 'gak', 'nggak', 'tidak', 'iya', 'yoi', 'yep', 'sip', 'test', 'tes', 'halo', 'hai', 'hello',
+    'info', 'link', 'bg', 'bang', 'bangsat', 'anjir', 'anj', 'bjir', 'jir', 'woi', 'woy', 'oy'
 ]);
 
 /**
@@ -45,62 +49,49 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
     if (!messageBody) return '';
     const cleanBody = messageBody.trim();
 
-    // 1. Explicit mention/tag with @ (contoh: "@ilvy0uv", "absen @ilvy0uv", "@ilvy0uv hadir")
+    // 1. Explicit mention/tag with @ (contoh: "@nbil2705", "absen @nbil2705", "@hykeoony hadir")
     const atMatch = cleanBody.match(/@([a-zA-Z0-9._]{2,32})/);
     if (atMatch && atMatch[1]) {
         const norm = normalizeTag(atMatch[1]);
         if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
-    // 2. Explicit prefix seperti "tt: ilvy0uv", "tiktok: ilvy0uv", "username: ilvy0uv", "tag: ilvy0uv", "id: ilvy0uv"
+    // 2. Explicit prefix seperti "tt: nbil2705", "tiktok: nbil2705", "username: nbil2705", "tag: nbil2705", "id: nbil2705"
     const prefixMatch = cleanBody.match(/(?:tt|tiktok|username|user|tag|akun|id|ig)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
     if (prefixMatch && prefixMatch[1]) {
         const norm = normalizeTag(prefixMatch[1]);
         if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
-    // 3. Multi-line format (contoh di WhatsApp: baris 1 "hykeoony", baris 2 "absen" atau sebaliknya)
+    // 3. Multi-line format jika ada baris ABSEN dan baris tag eksplisit dengan @ atau tt:
     const lines = cleanBody.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
     if (lines.length > 1) {
         for (const line of lines) {
-            const isAbsenLine = /(?:^|[^a-zA-Z0-9])(absen|hadir|ikutan)(?:$|[^a-zA-Z0-9])/i.test(line);
-            if (!isAbsenLine) {
-                const cleanWord = line.replace(/^[@~]/, '').trim();
-                const norm = cleanWord.toLowerCase();
-                if (/^[a-z0-9._]{2,32}$/.test(norm) && !WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) {
-                    return norm;
-                }
+            // Cek jika baris memiliki @ atau prefix tt:
+            const lineAtMatch = line.match(/^@([a-zA-Z0-9._]{2,32})$/);
+            if (lineAtMatch && lineAtMatch[1]) {
+                const norm = normalizeTag(lineAtMatch[1]);
+                if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
+            }
+            const linePrefixMatch = line.match(/^(?:tt|tiktok|username|user|tag|akun|id)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})$/i);
+            if (linePrefixMatch && linePrefixMatch[1]) {
+                const norm = normalizeTag(linePrefixMatch[1]);
+                if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
             }
         }
     }
 
-    // 4. Pola: "absen <username>" atau "hadir <username>" (contoh: "absen ilvy0uv", "hadir ilvy0uv", "ABSEN ilvy0uv")
-    const afterAbsenMatch = cleanBody.match(/(?:absen|hadir|ikutan)\s+[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
+    // 4. Pola eksplisit: "absen @username" atau "absen tt: username" (jika tanpa @, hanya jika cocok dengan knownUsernames)
+    const afterAbsenMatch = cleanBody.match(/(?:absen|hadir|ikutan)\s+[:=\-]?\s*@([a-zA-Z0-9._]{2,32})/i);
     if (afterAbsenMatch && afterAbsenMatch[1]) {
         const norm = normalizeTag(afterAbsenMatch[1]);
         if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
-    // 5. Pola: "<username> absen" atau "<username> hadir" (contoh: "ilvy0uv absen", "ilvy0uv hadir")
-    const beforeAbsenMatch = cleanBody.match(/@?([a-zA-Z0-9._]{2,32})\s+(?:absen|hadir)/i);
-    if (beforeAbsenMatch && beforeAbsenMatch[1]) {
-        const norm = normalizeTag(beforeAbsenMatch[1]);
-        if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
-    }
-
-    // 6. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar
+    // 5. Cek apakah pesan menyebutkan salah satu username peserta TikTok yang sudah terdaftar di giveaway
     for (const u of knownUsernames) {
         if (u && u.length >= 3 && new RegExp('\\b' + u + '\\b', 'i').test(cleanBody)) {
             return u.toLowerCase();
-        }
-    }
-
-    // 7. Jika seluruh pesan adalah satu kata username valid (bukan kata stop words & bukan angka panjang)
-    const singleWord = cleanBody.replace(/^[@~]/, '').trim();
-    if (/^[a-z0-9._]{2,32}$/i.test(singleWord)) {
-        const norm = singleWord.toLowerCase();
-        if (!WA_STOP_WORDS.has(norm) && !/^\d{7,}$/.test(norm) && isValidTikTokUsername(norm)) {
-            return norm;
         }
     }
 

@@ -337,29 +337,15 @@ export function processImportedChat(
     // 2. PERIKSA MEMBER TAG (USERNAME TIKTOK)
     let finalMemberTag = '';
 
-    // A. Cek apakah ada member tag di dalam pesan chat itu sendiri (contoh: "ABSEN @hykeoony" atau "ABSEN hykeoony")
-    const tagFromMsg = extractMemberTagFromMessage(msg.text, contactName || matchedMember?.push_name, knownUsernames);
-    if (tagFromMsg) {
-      finalMemberTag = tagFromMsg.trim().toLowerCase();
-    }
-
-    // B. Ambil member tag yang sudah tersimpan di data grup WhatsApp untuk member ini
-    if (!finalMemberTag && matchedMember && matchedMember.member_tag) {
+    // A. PRIORITAS UTAMA (#1): Ambil member tag resmi yang sudah tersimpan di data grup WhatsApp untuk member ini
+    if (matchedMember && matchedMember.member_tag) {
       const existingTag = matchedMember.member_tag.replace(/^@/, '').trim().toLowerCase();
       if (existingTag && !/^\d{10,}$/.test(existingTag) && isValidTikTokUsername(existingTag)) {
         finalMemberTag = existingTag;
       }
     }
 
-    // C. Cek apakah pengirim pernah mengirimkan tag TikTok di pesan LAIN dalam chat log yang sama (Two-pass parser)
-    if (!finalMemberTag) {
-      const tagFromHistory = senderDiscoveredTags.get(senderKey) || (senderDigits ? senderDiscoveredTags.get(senderDigits) : undefined);
-      if (tagFromHistory && isValidTikTokUsername(tagFromHistory)) {
-        finalMemberTag = tagFromHistory;
-      }
-    }
-
-    // D. Cek apakah nomor telepon pengirim cocok dengan member_tag yang ada di data grup anggota lainnya
+    // B. Cek apakah nomor telepon pengirim cocok dengan member grup lain yang memiliki member_tag resmi
     if (!finalMemberTag && (normalizedPhone || matchedMember?.phone)) {
       const targetPhone = (normalizedPhone || matchedMember?.phone || '').replace(/\D/g, '');
       if (targetPhone.length >= 7) {
@@ -375,6 +361,22 @@ export function processImportedChat(
             finalMemberTag = cTag;
           }
         }
+      }
+    }
+
+    // C. Jika belum ada tag di grup, cek apakah ada mention tag eksplisit di dalam pesan chat itu sendiri (contoh: "ABSEN @nbil2705" atau "tt: nbil2705")
+    if (!finalMemberTag) {
+      const tagFromMsg = extractMemberTagFromMessage(msg.text, contactName || matchedMember?.push_name, knownUsernames);
+      if (tagFromMsg) {
+        finalMemberTag = tagFromMsg.trim().toLowerCase();
+      }
+    }
+
+    // D. Cek apakah pengirim pernah mengirimkan tag TikTok eksplisit di pesan LAIN dalam riwayat chat (Two-pass parser)
+    if (!finalMemberTag) {
+      const tagFromHistory = senderDiscoveredTags.get(senderKey) || (senderDigits ? senderDiscoveredTags.get(senderDigits) : undefined);
+      if (tagFromHistory && isValidTikTokUsername(tagFromHistory)) {
+        finalMemberTag = tagFromHistory;
       }
     }
 
