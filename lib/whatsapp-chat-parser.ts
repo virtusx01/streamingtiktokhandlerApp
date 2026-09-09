@@ -495,3 +495,230 @@ export function processImportedChat(
     message: `Berhasil memproses ${parsedMessages.length} pesan. ${totalAbsenDetected} absen terdeteksi, ${newlyVerifiedCount} member tag terverifikasi masuk ke giveaway!`,
   };
 }
+
+export interface ParsedGroupMemberEntry {
+  name: string;
+  tag: string;
+  phone: string;
+  role?: 'admin' | 'member';
+}
+
+/**
+ * Parsing teks daftar anggota grup WhatsApp dari UI (seperti yang dicopy dari Info Grup WhatsApp Web/Desktop atau format Nama \n Tag \n NoHP)
+ * Format yang didukung:
+ * 
+ * Format 1 (Multi-baris seperti screenshot info anggota grup):
+ * Lecii ValoM
+ * ramadhan1929
+ * 
+ * ~?!
+ * Okimcats
+ * +62 813-2107-498
+ * 
+ * Format 2 (Satu baris):
+ * redplek - nbil2705 - +6281290313162
+ * atau: Lecii ValoM: ramadhan1929
+ */
+export function parseGroupMembersListText(rawText: string): ParsedGroupMemberEntry[] {
+  if (!rawText || !rawText.trim()) return [];
+
+  const lines = rawText
+    .split(/\r?\n/)
+    .map(l => cleanInvisibleChars(l))
+    .filter(l => l.length > 0);
+
+  const entries: ParsedGroupMemberEntry[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trim();
+
+    // Abaikan header grup atau teks bantuan umum
+    if (/^(anggota|members|participants|deskripsi grup|group info|keluar dari grup|search|cari)/i.test(line)) {
+      i++;
+      continue;
+    }
+
+    // Cek format 1-baris: "Nama - Tag - NoHP" atau "Nama : Tag" atau "Tag (NoHP)"
+    if (line.includes(' - ') || line.includes(' : ') || (line.includes(':') && !line.startsWith('http')) || line.includes('\t')) {
+      const parts = line.split(/[-:\t]/).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        let name = '';
+        let tag = '';
+        let phone = '';
+
+        for (const p of parts) {
+          if (isPhoneNumber(p)) {
+            phone = normalizePhoneNumber(p);
+          } else if (isValidTikTokUsername(p.replace(/^@/, '').toLowerCase())) {
+            if (!tag) {
+              tag = p.replace(/^@/, '').toLowerCase();
+            } else if (!name) {
+              name = p;
+            }
+          } else if (!name) {
+            name = p;
+          }
+        }
+
+        if (name || tag || phone) {
+          entries.push({
+            name: name || tag || phone,
+            tag: tag || '',
+            phone: phone ? (phone.startsWith('+') ? phone : `+${phone}`) : '',
+          });
+          i++;
+          continue;
+        }
+      }
+    }
+
+    // Format Multi-baris (seperti di screenshot UI Info Grup WhatsApp):
+    // Baris 1: Nama Kontak / Nama Profil (misal: "Lecii ValoM", "leon", "Nextaro", "redplek", "~?!", "~.")
+    // Baris 2: Member Tag (misal: "ramadhan1929", "leon", "bgtaro", "nbil2705", "Okimcats", "onlynatch")
+    // Baris 3 (opsional): Nomor HP (misal: "+62 813-2107-498")
+    const line1 = line;
+    let line2 = (i + 1 < lines.length) ? lines[i + 1].trim() : '';
+    let line3 = (i + 2 < lines.length) ? lines[i + 2].trim() : '';
+
+    const line1IsPhone = isPhoneNumber(line1);
+    const line2IsPhone = isPhoneNumber(line2);
+    const line3IsPhone = isPhoneNumber(line3);
+
+    let parsedName = '';
+    let parsedTag = '';
+    let parsedPhone = '';
+    let consumedLines = 1;
+
+    if (line1IsPhone) {
+      parsedPhone = normalizePhoneNumber(line1);
+      if (line2 && !line2IsPhone && isValidTikTokUsername(line2.replace(/^@/, '').toLowerCase())) {
+        parsedTag = line2.replace(/^@/, '').toLowerCase();
+        consumedLines = 2;
+      }
+    } else {
+      parsedName = line1;
+      if (line2) {
+        if (line2IsPhone) {
+          parsedPhone = normalizePhoneNumber(line2);
+          consumedLines = 2;
+        } else {
+          // Baris 2 kemungkinan besar adalah Member Tag (tepat di bawah nama di UI WhatsApp)
+          parsedTag = line2.replace(/^@/, '').trim().toLowerCase();
+          consumedLines = 2;
+
+          // Cek apakah baris 3 adalah nomor HP
+          if (line3 && line3IsPhone) {
+            parsedPhone = normalizePhoneNumber(line3);
+            consumedLines = 3;
+          }
+        }
+      }
+    }
+
+    if (parsedName || parsedTag || parsedPhone) {
+      entries.push({
+        name: parsedName || parsedPhone,
+        tag: parsedTag,
+        phone: parsedPhone ? (parsedPhone.startsWith('+') ? parsedPhone : `+${parsedPhone}`) : '',
+      });
+      i += consumedLines;
+    } else {
+      i++;
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Simpan dan perbarui Member Tag dari daftar anggota grup WhatsApp
+ */
+export function applyParsedGroupMembers(entries: ParsedGroupMemberEntry[], targetGroupJid?: string) {
+  const targetGroup = targetGroupJid || getTargetWaGroup() || '120363409436448923@g.us';
+  const existingMembers = getWaGroupMembers(targetGroup);
+  const membersToSave: WaMemberRecord[] = [];
+  let updatedCount = 0;
+  let addedCount = 0;
+
+  for (const entry of entries) {
+    const cleanTag = (entry.tag || '').replace(/^@/, '').trim().toLowerCase();
+    const rawPhone = (entry.phone || '').replace(/\D/g, '');
+    const cleanName = (entry.name || '').replace(/^[~@]/, '').trim();
+
+    // Cari member yang cocok di grup berdasarkan nomor HP atau Nama
+    let matched = existingMembers.find(m => {
+      const mPhone = (m.phone || '').replace(/\D/g, '');
+      const mJid = (m.jid || '').split('@')[0].replace(/\D/g, '');
+      if (rawPhone && rawPhone.length >= 7) {
+        if (mPhone === rawPhone || mJid === rawPhone) return true;
+        if (mPhone.endsWith(rawPhone.slice(-8)) || rawPhone.endsWith(mPhone.slice(-8))) return true;
+      }
+      return false;
+    });
+
+    if (!matched && cleanName) {
+      const cleanAlpha = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      matched = existingMembers.find(m => {
+        const mPush = (m.push_name || '').replace(/^[~@]/, '').trim().toLowerCase();
+        if (mPush === cleanName.toLowerCase()) return true;
+        if (cleanAlpha && cleanAlpha.length >= 2) {
+          const mAlpha = mPush.replace(/[^a-z0-9]/g, '');
+          if (mAlpha === cleanAlpha) return true;
+        }
+        return false;
+      });
+    }
+
+    const jid = matched?.jid || (
+      rawPhone
+        ? `${rawPhone}@s.whatsapp.net`
+        : `member_${cleanTag || cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || Date.now()}@s.whatsapp.net`
+    );
+
+    const record: WaMemberRecord = {
+      group_jid: targetGroup,
+      jid,
+      phone: entry.phone || matched?.phone || (rawPhone ? `+${rawPhone}` : ''),
+      member_tag: cleanTag || matched?.member_tag || '',
+      push_name: cleanName || matched?.push_name || '',
+      role: matched?.role || 'member',
+      has_absen: matched?.has_absen || 0,
+      absen_at: matched?.absen_at || null,
+      last_seen: new Date().toISOString(),
+    };
+
+    membersToSave.push(record);
+
+    if (matched) {
+      updatedCount++;
+    } else {
+      addedCount++;
+    }
+
+    // Jika member ini punya absen dan tag valid, langsung masukkan ke giveaway_participants
+    if (cleanTag && isValidTikTokUsername(cleanTag) && record.has_absen) {
+      addGiveawayParticipant(
+        cleanTag,
+        record.push_name || cleanTag,
+        null,
+        1,
+        record.phone || null,
+        cleanTag
+      );
+    }
+  }
+
+  if (membersToSave.length > 0) {
+    saveWaGroupMembers(membersToSave);
+    syncAllParticipantsWithWa();
+  }
+
+  return {
+    success: true,
+    totalParsed: entries.length,
+    updatedCount,
+    addedCount,
+    savedCount: membersToSave.length,
+  };
+}

@@ -926,6 +926,11 @@ export default function GiveawayPage() {
   const [importResult, setImportResult]             = useState<any | null>(null);
   const [showImportPasteArea, setShowImportPasteArea] = useState<boolean>(false);
 
+  // Quick Member Tag Import States (Nama & Tag seperti di Screenshot Info Grup WA)
+  const [showMemberTagModal, setShowMemberTagModal] = useState<boolean>(false);
+  const [memberTagImportText, setMemberTagImportText] = useState<string>('');
+  const [memberTagImportLoading, setMemberTagImportLoading] = useState<boolean>(false);
+
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3200);
@@ -1167,6 +1172,40 @@ export default function GiveawayPage() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleImportMemberTags = async () => {
+    if (!memberTagImportText.trim()) {
+      showToast('Tempel daftar nama & member tag terlebih dahulu', 'error');
+      return;
+    }
+    setMemberTagImportLoading(true);
+    try {
+      const res = await fetch('/api/whatsapp/import-members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: memberTagImportText,
+          targetGroup: targetWaGroup || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ ${data.message}`);
+        setShowMemberTagModal(false);
+        setMemberTagImportText('');
+        if (data.members) {
+          setWaAllMembers(data.members);
+        }
+        fetchAll();
+      } else {
+        showToast(data.error || 'Gagal mengimpor daftar member tag', 'error');
+      }
+    } catch (e: any) {
+      showToast('Error mengimpor member tag: ' + (e?.message || e), 'error');
+    } finally {
+      setMemberTagImportLoading(false);
+    }
   };
 
   const fetchConfig = useCallback(async () => {
@@ -2222,16 +2261,91 @@ export default function GiveawayPage() {
               </div>
 
               {/* Tombol Action Sinkronisasi Data Member Tag */}
-              <div className="pt-4 border-t border-white/10 space-y-4">
-                <button
-                  onClick={() => handleSyncWaMembers()}
-                  disabled={waSyncing || waStatus !== 'CONNECTED' || !targetWaGroup}
-                  className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)' }}
-                >
-                  <span>{waSyncing ? '⏳' : '📥'}</span>
-                  <span>{waSyncing ? 'Sedang Menyinkronkan…' : 'Tarik & Sinkronkan Member Tag Sekarang'}</span>
-                </button>
+              <div className="pt-4 border-t border-white/10 space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    onClick={() => handleSyncWaMembers()}
+                    disabled={waSyncing || waStatus !== 'CONNECTED' || !targetWaGroup}
+                    className="flex-1 py-3 rounded-xl font-bold text-xs sm:text-sm text-white transition-all hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)' }}
+                  >
+                    <span>{waSyncing ? '⏳' : '📥'}</span>
+                    <span>{waSyncing ? 'Menyinkronkan…' : 'Tarik Otomatis (WhatsApp)'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowMemberTagModal(true)}
+                    className="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-sky-200 transition-all hover:bg-sky-500/20 flex items-center justify-center gap-2"
+                    style={{ background: 'rgba(14,165,233,0.15)', border: '1px solid rgba(14,165,233,0.35)' }}
+                  >
+                    <span>✍️</span>
+                    <span>Tempel List Tag Grup</span>
+                  </button>
+                </div>
+
+                {/* Modal Cepat Tempel Daftar Nama & Member Tag */}
+                {showMemberTagModal && (
+                  <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                    <div
+                      className="w-full max-w-xl rounded-3xl p-6 shadow-2xl space-y-4"
+                      style={{ background: '#111827', border: '1px solid rgba(56,189,248,0.3)' }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🏷️</span>
+                          <h3 className="font-bold text-white text-base">Input / Tempel Daftar Member Tag Grup</h3>
+                        </div>
+                        <button
+                          onClick={() => setShowMemberTagModal(false)}
+                          className="text-gray-400 hover:text-white p-1 rounded-lg"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        Salin daftar nama &amp; tag anggota langsung dari WhatsApp (atau ketik Nama dan Tag di baris berikutnya).
+                      </p>
+
+                      <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 text-[11px] text-gray-400 font-mono">
+                        <div className="text-sky-400 font-bold mb-0.5">💡 Contoh format:</div>
+                        <div>Lecii ValoM</div>
+                        <div className="text-emerald-400">ramadhan1929</div>
+                        <div>Nextaro</div>
+                        <div className="text-emerald-400">bgtaro</div>
+                        <div>redplek</div>
+                        <div className="text-emerald-400">nbil2705</div>
+                        <div className="text-gray-500 mt-1">atau format 1 baris: <code>redplek - nbil2705</code></div>
+                      </div>
+
+                      <textarea
+                        rows={8}
+                        placeholder={`Lecii ValoM\nramadhan1929\n\nNextaro\nbgtaro\n\nredplek\nnbil2705\n\n~?!\nOkimcats\n+62 813-2107-498`}
+                        value={memberTagImportText}
+                        onChange={e => setMemberTagImportText(e.target.value)}
+                        className="w-full px-3.5 py-3 rounded-2xl text-xs font-mono text-white placeholder-gray-600 bg-white/5 border border-white/10 focus:outline-none focus:border-sky-500 resize-y"
+                      />
+
+                      <div className="flex items-center justify-end gap-2 pt-2">
+                        <button
+                          onClick={() => setShowMemberTagModal(false)}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
+                        >
+                          Batal
+                        </button>
+                        <button
+                          onClick={handleImportMemberTags}
+                          disabled={memberTagImportLoading || !memberTagImportText.trim()}
+                          className="px-5 py-2.5 rounded-xl text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-40 flex items-center gap-1.5"
+                          style={{ background: 'linear-gradient(135deg, #0284C7, #0369A1)' }}
+                        >
+                          <span>{memberTagImportLoading ? '⏳' : '💾'}</span>
+                          <span>{memberTagImportLoading ? 'Menyimpan…' : 'Simpan Semua Member Tag'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Tabel Semua Member Grup WA */}
                 {waAllMembers.length > 0 && (
