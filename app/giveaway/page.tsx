@@ -212,7 +212,7 @@ export const triggerWheelOfNamesConfetti = () => {
   requestAnimationFrame(frame);
 };
 
-// ─── Privacy Helper: Mask Phone Number (Contoh: 62815****949) ─────────────────
+// ─── Privacy Helper: Mask Phone Number (Contoh: 628898****204 - 6 digit awal & 3 digit akhir) ───
 export function maskPhone(phone: string | null | undefined): string {
   if (!phone) return '';
   let digits = phone.replace(/\D/g, '');
@@ -221,8 +221,8 @@ export function maskPhone(phone: string | null | undefined): string {
   if (digits.startsWith('08') && digits.length >= 9) {
     digits = '628' + digits.slice(2);
   }
-  if (digits.length <= 7) return digits;
-  const prefix = digits.slice(0, 5);
+  if (digits.length <= 8) return digits;
+  const prefix = digits.slice(0, 6);
   const suffix = digits.slice(-3);
   return `${prefix}****${suffix}`;
 }

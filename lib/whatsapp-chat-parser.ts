@@ -86,13 +86,13 @@ export function isPhoneNumber(sender: string): boolean {
 }
 
 /**
- * Format sensor nomor telepon untuk privasi (contoh: 62815****949)
+ * Format sensor nomor telepon untuk privasi (contoh: 628898****204 - 6 digit awal & 3 digit akhir)
  */
 export function maskPhoneNumber(phone: string): string {
   if (!phone) return '';
   const digits = normalizePhoneNumber(phone);
-  if (digits.length <= 7) return digits;
-  const prefix = digits.slice(0, 5);
+  if (digits.length <= 8) return digits;
+  const prefix = digits.slice(0, 6);
   const suffix = digits.slice(-3);
   return `${prefix}****${suffix}`;
 }

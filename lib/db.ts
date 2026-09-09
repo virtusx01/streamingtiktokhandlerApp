@@ -630,7 +630,7 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
     displayName = cleanPushName;
   } else if (phoneDigits.length >= 7) {
     const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
-    displayName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+    displayName = norm.length > 8 ? `${norm.slice(0, 6)}****${norm.slice(-3)}` : norm;
   } else {
     displayName = 'Peserta';
   }
@@ -671,7 +671,7 @@ export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, 
     uiName = displayName;
   } else if (phoneDigits.length >= 7) {
     const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
-    uiName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+    uiName = norm.length > 8 ? `${norm.slice(0, 6)}****${norm.slice(-3)}` : norm;
   } else {
     uiName = cleanTag || 'Peserta';
   }
@@ -848,7 +848,7 @@ export function syncAllParticipantsWithWa() {
       displayName = cleanPush;
     } else if (phoneDigits.length >= 7) {
       const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
-      displayName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+      displayName = norm.length > 8 ? `${norm.slice(0, 6)}****${norm.slice(-3)}` : norm;
     } else {
       displayName = 'Peserta';
     }
