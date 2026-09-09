@@ -282,29 +282,34 @@ export function processImportedChat(
       const cleanContact = contactName.toLowerCase();
       const cleanAlpha = cleanContact.replace(/[^a-z0-9]/g, '');
 
-      // 1. Coba exact match push_name, phone, atau member_tag
+      // 1. Coba exact match push_name atau member_tag
       matchedMember = groupMembers.find(m => {
         const mPush = (m.push_name || '').replace(/^[~@]/, '').trim().toLowerCase();
         const mTag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
-        return mPush === cleanContact || mTag === cleanContact;
+        return (mPush && mPush === cleanContact) || (mTag && mTag === cleanContact);
       });
 
-      // 2. Coba strip emoji / non-alphanumeric match
+      // 2. Coba strip emoji / non-alphanumeric exact match
       if (!matchedMember && cleanAlpha && cleanAlpha.length >= 2) {
         matchedMember = groupMembers.find(m => {
           const mPushAlpha = (m.push_name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const mTagAlpha = (m.member_tag || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          return mPushAlpha === cleanAlpha || mTagAlpha === cleanAlpha;
+          return (mPushAlpha && mPushAlpha === cleanAlpha) || (mTagAlpha && mTagAlpha === cleanAlpha);
         });
       }
 
-      // 3. Coba substring match jika nama cukup panjang
-      if (!matchedMember && cleanAlpha && cleanAlpha.length >= 3) {
+      // 3. Coba substring match HANYA jika KEDUA nama cukup panjang (>= 4 karakter) dan selisih panjang <= 4
+      if (!matchedMember && cleanAlpha && cleanAlpha.length >= 4) {
         matchedMember = groupMembers.find(m => {
           const mPushAlpha = (m.push_name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const mTagAlpha = (m.member_tag || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          return (mPushAlpha && (mPushAlpha.includes(cleanAlpha) || cleanAlpha.includes(mPushAlpha))) ||
-                 (mTagAlpha && (mTagAlpha.includes(cleanAlpha) || cleanAlpha.includes(mTagAlpha)));
+          if (mPushAlpha && mPushAlpha.length >= 4 && Math.abs(mPushAlpha.length - cleanAlpha.length) <= 4) {
+            if (mPushAlpha.includes(cleanAlpha) || cleanAlpha.includes(mPushAlpha)) return true;
+          }
+          if (mTagAlpha && mTagAlpha.length >= 4 && Math.abs(mTagAlpha.length - cleanAlpha.length) <= 4) {
+            if (mTagAlpha.includes(cleanAlpha) || cleanAlpha.includes(mTagAlpha)) return true;
+          }
+          return false;
         });
       }
     }
@@ -388,11 +393,13 @@ export function processImportedChat(
         : `imported_${contactName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || Date.now()}@s.whatsapp.net`
     );
 
+    const preservedTag = isValidTag ? finalMemberTag : (matchedMember?.member_tag || '');
+
     const recordToSave: WaMemberRecord = {
       group_jid: targetGroup,
       jid: memberJid,
       phone: resolvedPhone ? (resolvedPhone.startsWith('+') ? resolvedPhone : `+${resolvedPhone}`) : (matchedMember?.phone || ''),
-      member_tag: isValidTag ? finalMemberTag : (matchedMember?.member_tag || ''),
+      member_tag: preservedTag,
       push_name: resolvedName,
       role: matchedMember?.role || 'member',
       has_absen: 1,
