@@ -263,16 +263,18 @@ export function processImportedChat(
     let matchedMember: WaMemberRecord | undefined;
 
     if (isPhone && normalizedPhone) {
-      // Cocokkan berdasarkan nomor telepon
+      // Cocokkan berdasarkan nomor telepon (strip non-digit dan cocokkan akhiran digit nomor telepon)
+      const normDigits = normalizedPhone.replace(/\D/g, '');
       matchedMember = groupMembers.find(m => {
         const mPhone = (m.phone || '').replace(/\D/g, '');
         const mJid = (m.jid || '').replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0].replace(/\D/g, '');
-        return (
-          mPhone === normalizedPhone ||
-          mJid === normalizedPhone ||
-          (normalizedPhone.length >= 9 && mPhone.endsWith(normalizedPhone.slice(-9))) ||
-          (mPhone.length >= 9 && normalizedPhone.endsWith(mPhone.slice(-9)))
-        );
+        if (!mPhone && !mJid) return false;
+        if (mPhone === normDigits || mJid === normDigits) return true;
+        if (normDigits.length >= 8) {
+          if (mPhone && (mPhone.endsWith(normDigits.slice(-8)) || normDigits.endsWith(mPhone.slice(-8)))) return true;
+          if (mJid && !mJid.endsWith('@lid') && (mJid.endsWith(normDigits.slice(-8)) || normDigits.endsWith(mJid.slice(-8)))) return true;
+        }
+        return false;
       });
     } else if (contactName) {
       // Cocokkan berdasarkan nama kontak / push_name

@@ -533,7 +533,8 @@ export async function syncGroupMembers(groupJid: string) {
             if (metadata && metadata.participants) {
                 const realParticipants = getRealParticipants();
                 const membersToSave = metadata.participants.map((p: any) => {
-                    const phone = p.id ? p.id.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0] : '';
+                    const rawPhoneSource = p.phoneNumber || p.id || '';
+                    const phone = rawPhoneSource ? rawPhoneSource.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0] : '';
                     let memberTag = p.memberTag || p.member_tag || p.tag || p.role_tag || '';
                     if (typeof memberTag === 'string' && /^\d{10,}$/.test(memberTag.trim())) {
                         memberTag = '';
