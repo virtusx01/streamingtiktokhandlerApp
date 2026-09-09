@@ -212,6 +212,41 @@ export const triggerWheelOfNamesConfetti = () => {
   requestAnimationFrame(frame);
 };
 
+// ─── Privacy Helper: Mask Phone Number (Contoh: 62815****949) ─────────────────
+export function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return '';
+  let digits = phone.replace(/\D/g, '');
+  if (!digits) return '';
+  // Ubah awalan 08 ke format internasional 628
+  if (digits.startsWith('08') && digits.length >= 9) {
+    digits = '628' + digits.slice(2);
+  }
+  if (digits.length <= 7) return digits;
+  const prefix = digits.slice(0, 5);
+  const suffix = digits.slice(-3);
+  return `${prefix}****${suffix}`;
+}
+
+// ─── Clean Participant Display Name (Prioritaskan nama asli, fallback nomor disensor) ───
+export function getCleanParticipantDisplayName(p: { nickname?: string | null; username?: string; wa_phone?: string | null }): string {
+  const rawNick = (p.nickname || '').trim();
+  const phone = p.wa_phone || (p.username || '').replace(/^wa_/, '');
+
+  // Cek apakah nickname terlihat seperti nomor telepon mentah
+  const isNickPhone = /^[+\d\s\-().]{7,}$/.test(rawNick.replace(/·\d{4}$/, '').trim());
+
+  if (rawNick && !isNickPhone) {
+    return rawNick;
+  }
+
+  // Jika nickname cuma nomor HP atau kosong, tampilkan nomor HP yang disamarkan (62815****949)
+  if (phone) {
+    return maskPhone(phone);
+  }
+
+  return rawNick || p.username || 'Peserta';
+}
+
 // ─── Improved Spin Wheel (Wheel of Names Style) ───────────────────────────────
 function SpinWheel({
   participants,
@@ -369,15 +404,8 @@ function SpinWheel({
         ctx.translate(cx, cy);
         ctx.rotate(startAngle + slice / 2);
 
-        // Format nama dan nomor belakang 4 terakhir (misal: "Sayang ·9226" atau "Pasha ·9892")
-        let label = participants[i].nickname || participants[i].username;
-        if (participants[i].wa_phone) {
-          const phDigits = participants[i].wa_phone!.replace(/\D/g, '');
-          const l4 = phDigits.length >= 4 ? phDigits.slice(-4) : '';
-          if (l4 && !label.includes(l4)) {
-            label = `${label} ·${l4}`;
-          }
-        }
+        // Format display nama & privasi: Nama asli jika ada, disingkat 62815****949 jika cuma nomor
+        const label = getCleanParticipantDisplayName(participants[i]);
         const maxLen = n > 10 ? (isBig ? 20 : 15) : (isBig ? 24 : 18);
         const displayLabel = label.length > maxLen ? label.slice(0, maxLen) + '…' : label;
         const fontSize = Math.max(isBig ? 11 : 8, Math.min(isBig ? 20 : 13, (R * 0.38) / Math.max(1, Math.sqrt(n))));
@@ -763,7 +791,7 @@ function WinnerModal({
 
   const isTest = !!winner.is_tester;
   const isWaParticipant = (winner.username || '').startsWith('wa_');
-  const displayName = winner.nickname || winner.username || 'Pemenang';
+  const displayName = getCleanParticipantDisplayName(winner);
   const resolvedTiktok = tiktokSaved || (winner.wa_member_tag || '');
   const cleanTiktok = resolvedTiktok.replace(/^@/, '');
   const tiktokUrl = cleanTiktok ? `https://www.tiktok.com/@${cleanTiktok}` : '';
@@ -842,10 +870,10 @@ function WinnerModal({
             {displayName}
           </div>
 
-          {/* Phone hint */}
-          {winner.wa_phone && (
-            <div className="text-gray-400 text-sm mb-5">
-              📱 {winner.wa_phone}
+          {/* Phone hint (Masked untuk privasi, contoh: 62815****949) */}
+          {(winner.wa_phone || isWaParticipant) && (
+            <div className="text-gray-400 text-sm mb-5 font-mono">
+              📱 {maskPhone(winner.wa_phone || winner.username.replace(/^wa_/, ''))}
             </div>
           )}
 
@@ -2065,8 +2093,8 @@ export default function GiveawayPage() {
                             </div>
                           </td>
                           <td className="py-3 px-3 text-xs text-gray-300">
-                            <div>{p.wa_phone ? (p.wa_phone.startsWith('+') ? p.wa_phone : `+${p.wa_phone}`) : '-'}</div>
-                            <div className="text-[11px] text-gray-500">{p.nickname}</div>
+                            <div className="font-mono text-gray-300">{p.wa_phone ? maskPhone(p.wa_phone) : '-'}</div>
+                            <div className="text-[11px] text-gray-500">{getCleanParticipantDisplayName(p)}</div>
                           </td>
                           <td className="py-3 px-2 text-center">
                             <span className="px-2.5 py-1 rounded-full text-xs font-semibold"
@@ -2513,7 +2541,7 @@ export default function GiveawayPage() {
                                     )}
                                   </td>
                                   <td className="py-2 px-3 font-mono text-gray-400">
-                                    {m.phone ? (m.phone.startsWith('+') ? m.phone : `+${m.phone}`) : '-'}
+                                    {m.phone ? maskPhone(m.phone) : '-'}
                                   </td>
                                   <td className="py-2 px-3">
                                     {tag ? (

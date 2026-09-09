@@ -624,10 +624,16 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   // Masukkan SEMUA yang absen ke pool giveaway (tidak perlu syarat TikTok tag valid)
   const phoneDigits = phone.replace(/\D/g, '') || senderJid.split('@')[0].replace(/\D/g, '');
-  const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
-  const displayName = cleanPushName
-    ? (last4 ? `${cleanPushName} ·${last4}` : cleanPushName)
-    : (last4 ? `Peserta ·${last4}` : 'Peserta');
+  const isPushPhone = /^[+\d\s\-().]{7,}$/.test(cleanPushName);
+  let displayName: string;
+  if (!isPushPhone && cleanPushName) {
+    displayName = cleanPushName;
+  } else if (phoneDigits.length >= 7) {
+    const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
+    displayName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+  } else {
+    displayName = 'Peserta';
+  }
   const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${senderJid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
 
   addGiveawayParticipantFromWa(uid, displayName, finalTag || null, phone ? `+${phone}` : null);
@@ -657,12 +663,18 @@ export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, 
 
   saveWaGroupMembers([memberPayload]);
 
-  // Masukkan ke pool giveaway (semua yang absen, dengan format Nama ·XXXX)
+  // Masukkan ke pool giveaway (semua yang absen, nama asli atau nomor disamarkan)
   const phoneDigits = cleanPhone.replace(/\D/g, '');
-  const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
-  const uiName = displayName
-    ? (last4 ? `${displayName} ·${last4}` : displayName)
-    : (last4 ? `Peserta ·${last4}` : 'Peserta');
+  const isNickPhone = /^[+\d\s\-().]{7,}$/.test(displayName);
+  let uiName: string;
+  if (!isNickPhone && displayName) {
+    uiName = displayName;
+  } else if (phoneDigits.length >= 7) {
+    const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
+    uiName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+  } else {
+    uiName = cleanTag || 'Peserta';
+  }
   const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${cleanTag.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
 
   addGiveawayParticipantFromWa(uid, uiName, cleanTag || null, phone ? phone.trim() : (cleanPhone || null));
@@ -830,12 +842,16 @@ export function syncAllParticipantsWithWa() {
 
     // Buat unique ID yang stabil: preferensi nomor HP, fallback JID
     const phoneDigits = phone || jidNum;
-    const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
-
-    // Buat display name: Nama + ·XXXX (4 digit terakhir HP)
-    const displayName = cleanPush
-      ? (last4 ? `${cleanPush} ·${last4}` : cleanPush)
-      : (last4 ? `Peserta ·${last4}` : 'Peserta');
+    const isPushPhone = /^[+\d\s\-().]{7,}$/.test(cleanPush);
+    let displayName: string;
+    if (!isPushPhone && cleanPush) {
+      displayName = cleanPush;
+    } else if (phoneDigits.length >= 7) {
+      const norm = phoneDigits.startsWith('08') ? '628' + phoneDigits.slice(2) : phoneDigits;
+      displayName = norm.length > 7 ? `${norm.slice(0, 5)}****${norm.slice(-3)}` : norm;
+    } else {
+      displayName = 'Peserta';
+    }
 
     // Username unik berbasis nomor HP (bukan username TikTok)
     // Format: wa_XXXXXXXX (8 digit terakhir HP atau JID)

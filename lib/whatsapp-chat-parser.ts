@@ -86,6 +86,18 @@ export function isPhoneNumber(sender: string): boolean {
 }
 
 /**
+ * Format sensor nomor telepon untuk privasi (contoh: 62815****949)
+ */
+export function maskPhoneNumber(phone: string): string {
+  if (!phone) return '';
+  const digits = normalizePhoneNumber(phone);
+  if (digits.length <= 7) return digits;
+  const prefix = digits.slice(0, 5);
+  const suffix = digits.slice(-3);
+  return `${prefix}****${suffix}`;
+}
+
+/**
  * Parsing waktu WhatsApp ke Date object
  * Format yang didukung:
  * 9/8/26, 4:36 PM
@@ -398,12 +410,15 @@ export function processImportedChat(
 
     // 5. MASUKKAN SEMUA YANG ABSEN KE POOL GIVEAWAY
     // Username = wa_XXXXXXXXXX (unik dari nomor HP / JID)
-    // Nickname = Nama + ·XXXX (4 digit terakhir HP)
+    // Nickname = Nama asli jika ada, jika cuma nomor maka disamarkan 62815****949
     const phoneDigits = resolvedPhone.replace(/\D/g, '') || (matchedMember?.jid || '').split('@')[0].replace(/\D/g, '');
-    const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
-    const displayName = resolvedName
-      ? (last4 ? `${resolvedName} ·${last4}` : resolvedName)
-      : (last4 ? `Peserta ·${last4}` : 'Peserta');
+    const isNameAPhone = /^[+\d\s\-().]{7,}$/.test(resolvedName.trim());
+    let displayName: string;
+    if (!isNameAPhone && resolvedName.trim()) {
+      displayName = resolvedName.trim();
+    } else {
+      displayName = maskPhoneNumber(resolvedPhone || phoneDigits) || 'Peserta';
+    }
     const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${memberJid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
 
     addGiveawayParticipantFromWa(
