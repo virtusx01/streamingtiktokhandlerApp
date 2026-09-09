@@ -726,7 +726,7 @@ function SpinWheel({
   );
 }
 
-// ─── Winner Modal (Wheel of Names Exact Design) ──────────────────────────────
+// ─── Winner Modal (Wheel of Names + Manual TikTok Input) ─────────────────────
 function WinnerModal({
   winner,
   onClose,
@@ -738,12 +738,52 @@ function WinnerModal({
   onRemove: () => void;
   isDuplicate?: boolean;
 }) {
+  const [tiktokInput, setTiktokInput] = useState('');
+  const [tiktokSaved, setTiktokSaved] = useState('');
+  const [savingTiktok, setSavingTiktok] = useState(false);
+  const [tiktokError, setTiktokError] = useState('');
+
+  // Reset input saat winner berubah
+  useEffect(() => {
+    const existingTag = winner?.wa_member_tag || '';
+    setTiktokInput(existingTag ? `@${existingTag}` : '');
+    setTiktokSaved(existingTag || '');
+    setTiktokError('');
+  }, [winner?.username]);
+
   if (!winner) return null;
 
   const isTest = !!winner.is_tester;
+  const isWaParticipant = (winner.username || '').startsWith('wa_');
   const displayName = winner.nickname || winner.username || 'Pemenang';
-  const cleanUsername = (winner.username || '').replace(/^@/, '');
-  const tiktokUrl = `https://www.tiktok.com/@${cleanUsername}`;
+  const resolvedTiktok = tiktokSaved || (winner.wa_member_tag || '');
+  const cleanTiktok = resolvedTiktok.replace(/^@/, '');
+  const tiktokUrl = cleanTiktok ? `https://www.tiktok.com/@${cleanTiktok}` : '';
+
+  const handleSaveTiktok = async () => {
+    const clean = tiktokInput.replace(/^@/, '').trim().toLowerCase();
+    if (!clean) { setTiktokError('Masukkan username TikTok terlebih dahulu'); return; }
+    setSavingTiktok(true);
+    setTiktokError('');
+    try {
+      const res = await fetch('/api/giveaway/winner', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: winner.username, tiktokUsername: clean }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTiktokSaved(clean);
+        setTiktokInput(`@${clean}`);
+      } else {
+        setTiktokError(data.error || 'Gagal menyimpan');
+      }
+    } catch {
+      setTiktokError('Error menyimpan username TikTok');
+    } finally {
+      setSavingTiktok(false);
+    }
+  };
 
   return (
     <div
@@ -765,10 +805,10 @@ function WinnerModal({
         }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Top Header Bar: Solid Blue with "Kita punya pemenang!" */}
+        {/* Top Header Bar */}
         <div className="bg-[#2563EB] px-6 py-3.5 flex items-center justify-between">
           <span className="text-white font-bold text-lg md:text-xl tracking-tight">
-            Kita punya pemenang!
+            🎉 Kita punya pemenang!
           </span>
           <div className="flex items-center gap-2">
             {isDuplicate && (
@@ -784,59 +824,116 @@ function WinnerModal({
           </div>
         </div>
 
-        {/* Modal Body: Large winner text */}
-        <div className="p-8 md:p-12 flex flex-col items-center text-center">
-          {/* Duplicate Alert Banner if duplicate detected */}
-          {isDuplicate && (
-            <div className="w-full mb-5 p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs text-center flex items-center justify-center gap-2">
-              <span>⚠️</span>
-              <span>
-                <strong>Perhatian:</strong> Username TikTok <code>@{winner.username}</code> terdaftar lebih dari 1 nomor di grup WA!
-              </span>
-            </div>
-          )}
-
-          {/* Huge clean winner name - Wheel of Names style, directly clickable */}
-          <a
-            href={tiktokUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Klik untuk buka profil TikTok pemenang ini"
-            className="text-4xl md:text-6xl font-light text-white mb-3 tracking-wide break-words max-w-full select-all hover:text-cyan-300 hover:underline transition-colors block cursor-pointer"
+        {/* Modal Body */}
+        <div className="p-7 md:p-10 flex flex-col items-center text-center">
+          {/* Winner Name - Huge */}
+          <div
+            className="text-4xl md:text-6xl font-light text-white mb-2 tracking-wide break-words max-w-full select-all"
             style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
           >
             {displayName}
-          </a>
-
-          {/* TikTok Account & Verification Link - directly clickable */}
-          <div className="flex flex-col items-center gap-2 mb-6">
-            <a
-              href={tiktokUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-base text-gray-300 hover:text-cyan-400 font-medium transition-colors inline-flex items-center gap-1.5 group cursor-pointer"
-              title="Buka profil TikTok pemenang di tab baru"
-            >
-              <span className="group-hover:underline">@{cleanUsername}</span>
-              <span className="text-xs text-gray-400 group-hover:text-cyan-400">↗</span>
-            </a>
-
-            <a
-              href={tiktokUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-flex items-center gap-2 px-5 py-2 rounded-full text-xs font-bold text-white transition-all hover:scale-105"
-              style={{
-                background: 'linear-gradient(135deg, #FF0050 0%, #00F2FE 100%)',
-                boxShadow: '0 0 16px rgba(0, 242, 254, 0.4)',
-              }}
-            >
-              <span>🔍 Verifikasi Profil TikTok (@{cleanUsername})</span>
-              <span className="text-sm">↗</span>
-            </a>
           </div>
 
-          {/* Action buttons: Tutup & Hapus */}
+          {/* Phone hint */}
+          {winner.wa_phone && (
+            <div className="text-gray-400 text-sm mb-5">
+              📱 {winner.wa_phone}
+            </div>
+          )}
+
+          {/* --- TikTok Input Section --- */}
+          {isWaParticipant && !tiktokSaved ? (
+            // Belum ada TikTok username → tampilkan form input
+            <div className="w-full mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+              <p className="text-amber-300 text-sm font-semibold mb-3 flex items-center gap-2 justify-center">
+                <span>🏷️</span>
+                <span>Minta pemenang sebutkan Username TikTok-nya:</span>
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tiktokInput}
+                  onChange={e => setTiktokInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveTiktok()}
+                  placeholder="@username_tiktok"
+                  autoFocus
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm bg-black/40 border border-white/20 text-white placeholder-gray-500 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/40"
+                  style={{ fontFamily: 'monospace' }}
+                />
+                <button
+                  onClick={handleSaveTiktok}
+                  disabled={savingTiktok}
+                  className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-amber-500 hover:bg-amber-400 transition-all disabled:opacity-60 whitespace-nowrap"
+                >
+                  {savingTiktok ? '...' : '✓ Simpan'}
+                </button>
+              </div>
+              {tiktokError && (
+                <p className="text-red-400 text-xs mt-2">{tiktokError}</p>
+              )}
+            </div>
+          ) : tiktokSaved || resolvedTiktok ? (
+            // Sudah ada TikTok username → tampilkan link verifikasi
+            <div className="w-full mb-6 flex flex-col items-center gap-3">
+              <a
+                href={tiktokUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-lg text-cyan-300 hover:text-cyan-200 font-semibold transition-colors inline-flex items-center gap-1.5 group"
+              >
+                <span className="group-hover:underline">@{cleanTiktok}</span>
+                <span className="text-sm">↗</span>
+              </a>
+              <a
+                href={tiktokUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold text-white transition-all hover:scale-105 active:scale-95"
+                style={{
+                  background: 'linear-gradient(135deg, #FF0050 0%, #00F2FE 100%)',
+                  boxShadow: '0 0 20px rgba(0, 242, 254, 0.4)',
+                }}
+              >
+                <span>🔍 Verifikasi Profil TikTok (@{cleanTiktok})</span>
+                <span className="text-base">↗</span>
+              </a>
+              {/* Option to edit */}
+              <button
+                onClick={() => { setTiktokSaved(''); setTiktokInput(`@${cleanTiktok}`); }}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors mt-1"
+              >
+                ✏️ Ubah username TikTok
+              </button>
+            </div>
+          ) : (
+            // Participant biasa tanpa wa_ prefix → tampilkan TikTok link langsung
+            <div className="flex flex-col items-center gap-3 mb-6">
+              <a
+                href={`https://www.tiktok.com/@${winner.username.replace(/^@/, '')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-lg text-cyan-300 hover:text-cyan-200 font-semibold transition-colors inline-flex items-center gap-1.5 group"
+              >
+                <span className="group-hover:underline">@{winner.username.replace(/^@/, '')}</span>
+                <span className="text-sm">↗</span>
+              </a>
+              <a
+                href={`https://www.tiktok.com/@${winner.username.replace(/^@/, '')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold text-white transition-all hover:scale-105 active:scale-95"
+                style={{
+                  background: 'linear-gradient(135deg, #FF0050 0%, #00F2FE 100%)',
+                  boxShadow: '0 0 20px rgba(0, 242, 254, 0.4)',
+                }}
+              >
+                <span>🔍 Verifikasi Profil TikTok</span>
+                <span className="text-base">↗</span>
+              </a>
+            </div>
+          )}
+
+          {/* Action buttons */}
           <div className="flex items-center justify-end gap-3 w-full pt-4 border-t border-white/10">
             <button
               onClick={onClose}
@@ -856,6 +953,7 @@ function WinnerModal({
     </div>
   );
 }
+
 
 // ─── Participant Row ───────────────────────────────────────────────────────
 const BadgeCheck = ({ ok }: { ok: boolean }) => (

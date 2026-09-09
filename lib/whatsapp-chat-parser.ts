@@ -5,6 +5,7 @@ import {
   syncAllParticipantsWithWa,
   getRealParticipants,
   addGiveawayParticipant,
+  addGiveawayParticipantFromWa,
   isWithinAbsenPeriod,
   WaMemberRecord,
 } from './db';
@@ -364,27 +365,10 @@ export function processImportedChat(
       }
     }
 
-    // 3. VALIDASI MEMBER TAG (Hanya huruf kecil, angka, titik, underscore, tanpa spasi)
+    // 3. Info member tag (TikTok username)
     const isValidTag = isValidTikTokUsername(finalMemberTag);
     const resolvedPhone = normalizedPhone || matchedMember?.phone || '';
     const resolvedName = contactName || matchedMember?.push_name || rawSender;
-
-    let itemStatus: 'VERIFIED' | 'TAG_MISSING' | 'INVALID_TAG' = 'TAG_MISSING';
-    let notes = '';
-
-    if (isValidTag) {
-      itemStatus = 'VERIFIED';
-      newlyVerifiedCount++;
-      notes = `✓ Terverifikasi! Username TikTok: @${finalMemberTag}`;
-    } else if (finalMemberTag) {
-      itemStatus = 'INVALID_TAG';
-      invalidTagCount++;
-      notes = `✗ Tag "@${finalMemberTag}" tidak valid (harus huruf kecil & tanpa spasi)`;
-    } else {
-      itemStatus = 'TAG_MISSING';
-      missingTagCount++;
-      notes = `⚠️ Absen tercatat, tetapi Member Tag / Username TikTok belum terisi`;
-    }
 
     // 4. SIMPAN KE WA GROUP MEMBERS DATABASE
     const memberJid = matchedMember?.jid || (
@@ -394,11 +378,14 @@ export function processImportedChat(
     );
 
     const preservedTag = isValidTag ? finalMemberTag : (matchedMember?.member_tag || '');
+    const resolvedPhoneFormatted = resolvedPhone
+      ? (resolvedPhone.startsWith('+') ? resolvedPhone : `+${resolvedPhone}`)
+      : (matchedMember?.phone || '');
 
     const recordToSave: WaMemberRecord = {
       group_jid: targetGroup,
       jid: memberJid,
-      phone: resolvedPhone ? (resolvedPhone.startsWith('+') ? resolvedPhone : `+${resolvedPhone}`) : (matchedMember?.phone || ''),
+      phone: resolvedPhoneFormatted,
       member_tag: preservedTag,
       push_name: resolvedName,
       role: matchedMember?.role || 'member',
@@ -409,17 +396,36 @@ export function processImportedChat(
 
     membersToSave.push(recordToSave);
 
-    // 5. JIKA TAG VALID, MASUKKAN LANGSUNG KE PESERTA GIVEAWAY
+    // 5. MASUKKAN SEMUA YANG ABSEN KE POOL GIVEAWAY
+    // Username = wa_XXXXXXXXXX (unik dari nomor HP / JID)
+    // Nickname = Nama + ·XXXX (4 digit terakhir HP)
+    const phoneDigits = resolvedPhone.replace(/\D/g, '') || (matchedMember?.jid || '').split('@')[0].replace(/\D/g, '');
+    const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
+    const displayName = resolvedName
+      ? (last4 ? `${resolvedName} ·${last4}` : resolvedName)
+      : (last4 ? `Peserta ·${last4}` : 'Peserta');
+    const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${memberJid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
+
+    addGiveawayParticipantFromWa(
+      uid,
+      displayName,
+      preservedTag || null,
+      resolvedPhoneFormatted || null
+    );
+
+    // Hitung statistik
+    const itemStatus: 'VERIFIED' | 'TAG_MISSING' | 'INVALID_TAG' = isValidTag ? 'VERIFIED' : (preservedTag ? 'INVALID_TAG' : 'TAG_MISSING');
     if (isValidTag) {
-      addGiveawayParticipant(
-        finalMemberTag,
-        resolvedName || finalMemberTag,
-        null,
-        1,
-        resolvedPhone ? (resolvedPhone.startsWith('+') ? resolvedPhone : `+${resolvedPhone}`) : null,
-        finalMemberTag
-      );
+      newlyVerifiedCount++;
+    } else if (preservedTag) {
+      invalidTagCount++;
+    } else {
+      missingTagCount++;
     }
+
+    const notes = isValidTag
+      ? `✓ Absen & masuk undian! Username TikTok: @${finalMemberTag}`
+      : `✓ Absen tercatat & masuk undian! (Username TikTok belum/akan diisi saat menang)`;
 
     results.push({
       sender: rawSender,

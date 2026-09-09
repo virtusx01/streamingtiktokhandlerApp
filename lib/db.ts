@@ -622,14 +622,15 @@ export function recordAbsenMessage(groupJid: string, senderJid: string, memberTa
 
   saveWaGroupMembers([memberPayload]);
 
-  const cleanTag = finalTag ? finalTag : ''; // sudah lowercase dari atas
-  const displayName = cleanPushName || cleanTag;
+  // Masukkan SEMUA yang absen ke pool giveaway (tidak perlu syarat TikTok tag valid)
+  const phoneDigits = phone.replace(/\D/g, '') || senderJid.split('@')[0].replace(/\D/g, '');
+  const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
+  const displayName = cleanPushName
+    ? (last4 ? `${cleanPushName} ·${last4}` : cleanPushName)
+    : (last4 ? `Peserta ·${last4}` : 'Peserta');
+  const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${senderJid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
 
-  // Hanya tambah ke peserta jika tag adalah valid TikTok username (lowercase, no spasi)
-  const isValidTag = cleanTag.length >= 2 && /^[a-z0-9._]+$/.test(cleanTag);
-  if (isValidTag) {
-    addGiveawayParticipant(cleanTag, displayName, null, 1, phone || null, cleanTag);
-  }
+  addGiveawayParticipantFromWa(uid, displayName, finalTag || null, phone ? `+${phone}` : null);
 
   syncAllParticipantsWithWa();
 }
@@ -656,9 +657,17 @@ export function registerWaAbsenManual(usernameOrTag: string, nickname?: string, 
 
   saveWaGroupMembers([memberPayload]);
 
-  addGiveawayParticipant(cleanTag, displayName, null, 1, phone ? phone.trim() : (cleanPhone || null), cleanTag);
+  // Masukkan ke pool giveaway (semua yang absen, dengan format Nama ·XXXX)
+  const phoneDigits = cleanPhone.replace(/\D/g, '');
+  const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
+  const uiName = displayName
+    ? (last4 ? `${displayName} ·${last4}` : displayName)
+    : (last4 ? `Peserta ·${last4}` : 'Peserta');
+  const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${cleanTag.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
 
-  return { success: true, username: cleanTag, nickname: displayName, phone: phone || cleanPhone };
+  addGiveawayParticipantFromWa(uid, uiName, cleanTag || null, phone ? phone.trim() : (cleanPhone || null));
+
+  return { success: true, username: uid, nickname: uiName, phone: phone || cleanPhone };
 }
 
 export function checkUserInWaGroup(username: string): { found: boolean; memberTag?: string; phone?: string; hasAbsen?: boolean } {
@@ -814,25 +823,110 @@ export function syncAllParticipantsWithWa() {
   const absenMembers = getWaGroupMembers(getTargetWaGroup() || undefined).filter(m => !!m.has_absen);
 
   for (const m of absenMembers) {
-    // Ambil dan normalisasi member_tag → ini adalah username TikTok
     const rawTag = (m.member_tag || '').replace(/^@/, '').trim().toLowerCase();
     const cleanPush = m.push_name ? m.push_name.replace(/^~/, '').trim() : '';
-    const phone = m.phone || null;
+    const phone = (m.phone || '').replace(/\D/g, '');
+    const jidNum = (m.jid || '').split('@')[0].replace(/\D/g, '');
 
-    // Validasi: username TikTok harus valid (lowercase, no spasi, hanya a-z 0-9 . _)
-    const isValidTag = rawTag.length >= 2 && /^[a-z0-9._]+$/.test(rawTag);
+    // Buat unique ID yang stabil: preferensi nomor HP, fallback JID
+    const phoneDigits = phone || jidNum;
+    const last4 = phoneDigits ? phoneDigits.slice(-4) : '';
 
-    if (isValidTag) {
-      // username TikTok = member_tag yang sudah divalidasi
-      addGiveawayParticipant(rawTag, cleanPush || rawTag, null, 1, phone, rawTag);
-    }
-    // Jika tidak ada tag valid, member ini tidak masuk daftar peserta giveaway
+    // Buat display name: Nama + ·XXXX (4 digit terakhir HP)
+    const displayName = cleanPush
+      ? (last4 ? `${cleanPush} ·${last4}` : cleanPush)
+      : (last4 ? `Peserta ·${last4}` : 'Peserta');
+
+    // Username unik berbasis nomor HP (bukan username TikTok)
+    // Format: wa_XXXXXXXX (8 digit terakhir HP atau JID)
+    const uid = phoneDigits ? `wa_${phoneDigits.slice(-10)}` : `wa_${m.jid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
+
+    // Masukkan ke pool giveaway tanpa syarat TikTok username
+    addGiveawayParticipantFromWa(uid, displayName, rawTag || null, phone ? `+${phone}` : (m.phone || null));
   }
 
   const realParticipants = getRealParticipants();
   for (const p of realParticipants) {
     syncParticipantWaStatus(p.username);
   }
+}
+
+/**
+ * Daftarkan peserta giveaway DARI WhatsApp (tanpa butuh TikTok username).
+ * Username = wa_XXXXXXXXXX (unik dari nomor HP).
+ * Nickname = Nama + ·XXXX (4 digit terakhir HP).
+ * TikTok username diisi nanti saat menang (via updateGiveawayWinnerTiktok).
+ */
+export function addGiveawayParticipantFromWa(
+  uid: string,
+  displayName: string,
+  tiktokTag: string | null,
+  waPhone: string | null
+) {
+  const nowIso = new Date().toISOString();
+  const existing = memoryParticipants.get(uid);
+
+  // Jangan timpa TikTok tag yang sudah ada dengan null/empty
+  const finalTag = tiktokTag || existing?.wa_member_tag || null;
+
+  const payload: GiveawayParticipant = {
+    username: uid,
+    nickname: displayName,
+    profile_picture: null,
+    has_followed: 1,
+    has_liked: existing?.has_liked || 0,
+    has_shared: 1,
+    has_commented: 1,
+    has_wa_group: 1,
+    wa_member_tag: finalTag,
+    wa_phone: waPhone || existing?.wa_phone || null,
+    is_eligible: 1,
+    is_tester: 0,
+    registered_at: existing?.registered_at || nowIso,
+    last_updated: nowIso,
+  };
+
+  memoryParticipants.set(uid, payload);
+
+  if (db) {
+    try {
+      db.prepare(`
+        INSERT INTO giveaway_participants (username, nickname, has_followed, has_shared, has_commented, has_wa_group, wa_member_tag, wa_phone, is_eligible, is_tester, last_updated)
+        VALUES (?, ?, 1, 1, 1, 1, ?, ?, 1, 0, datetime('now'))
+        ON CONFLICT(username) DO UPDATE SET
+          nickname = excluded.nickname,
+          has_wa_group = 1,
+          is_eligible = 1,
+          wa_member_tag = COALESCE(NULLIF(excluded.wa_member_tag, ''), giveaway_participants.wa_member_tag),
+          wa_phone = COALESCE(NULLIF(excluded.wa_phone, ''), giveaway_participants.wa_phone),
+          last_updated = datetime('now')
+      `).run(uid, displayName, finalTag || null, waPhone || null);
+    } catch {}
+  }
+
+  safeSupabaseUpsert('giveaway_participants', payload);
+}
+
+/**
+ * Setelah pemenang diundi, admin input username TikTok untuk verifikasi.
+ * Update wa_member_tag pada peserta (username = uid wa_XXXXXXXXXX).
+ */
+export function updateGiveawayWinnerTiktok(uid: string, tiktokUsername: string) {
+  const clean = tiktokUsername.replace(/^@/, '').trim().toLowerCase();
+  const existing = memoryParticipants.get(uid);
+  if (!existing) return false;
+
+  existing.wa_member_tag = clean || existing.wa_member_tag;
+  existing.last_updated = new Date().toISOString();
+  memoryParticipants.set(uid, existing);
+
+  if (db) {
+    try {
+      db.prepare(`UPDATE giveaway_participants SET wa_member_tag = ?, last_updated = datetime('now') WHERE username = ?`)
+        .run(clean || existing.wa_member_tag, uid);
+    } catch {}
+  }
+  return true;
 }
 
 export function addGiveawayParticipant(
@@ -889,6 +983,7 @@ export function addGiveawayParticipant(
   safeSupabaseUpsert('giveaway_participants', payload);
   computeEligibility(username);
 }
+
 
 export function updateGiveawayFollow(username: string, nickname: string, profilePicture?: string) {
   const waCheck = checkUserInWaGroup(username);
