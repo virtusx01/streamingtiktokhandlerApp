@@ -316,17 +316,14 @@ export function processImportedChat(
       }
     }
 
-    // C. Jika masih belum ada, cek apakah nama kontak pengirim itu sendiri merupakan username TikTok valid
+    // C. Jika masih belum ada, HANYA gunakan nama kontak pengirim jika COCOK dengan peserta giveaway yang terdaftar
     if (!finalMemberTag && contactName) {
       const cleanNameAsTag = contactName.replace(/[^a-zA-Z0-9._]/g, '').trim().toLowerCase();
       if (isValidTikTokUsername(cleanNameAsTag)) {
-        // Cek apakah nama ini ada di list peserta TikTok giveaway
+        // Hanya jadikan tag jika nama kontak persis cocok dengan username peserta TikTok giveaway yang sudah terdaftar
         const matchParticipant = existingParticipants.find(p => p.username.toLowerCase() === cleanNameAsTag);
         if (matchParticipant) {
           finalMemberTag = matchParticipant.username.toLowerCase();
-        } else if (cleanNameAsTag.length >= 3) {
-          // Jadikan candidate tag
-          finalMemberTag = cleanNameAsTag;
         }
       }
     }
