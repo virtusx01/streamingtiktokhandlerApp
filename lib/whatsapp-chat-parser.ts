@@ -224,27 +224,6 @@ export function processImportedChat(
   const parsedMessages = parseWaChatText(chatText);
   const totalLines = chatText.split(/\r?\n/).length;
 
-  // PASS 1: Kumpulkan semua petunjuk Member Tag / Username TikTok dari SELURUH pesan chat
-  // Seringkali seorang member mengetik "@username" atau "tt: username" atau satu kata username di pesan terpisah sebelum/sesudah ABSEN
-  const senderDiscoveredTags = new Map<string, string>();
-  for (const msg of parsedMessages) {
-    const rawSender = msg.sender.trim();
-    if (!rawSender) continue;
-    const senderKey = rawSender.toLowerCase();
-    const digitsKey = rawSender.replace(/\D/g, '');
-
-    const foundTag = extractMemberTagFromMessage(msg.text, undefined, knownUsernames);
-    if (foundTag && isValidTikTokUsername(foundTag)) {
-      if (!senderDiscoveredTags.has(senderKey)) {
-        senderDiscoveredTags.set(senderKey, foundTag);
-      }
-      if (digitsKey && digitsKey.length >= 7 && !senderDiscoveredTags.has(digitsKey)) {
-        senderDiscoveredTags.set(digitsKey, foundTag);
-      }
-    }
-  }
-
-  // PASS 2: Proses pesan ABSEN
   // Lacak pengirim unik agar tidak dobel proses jika seseorang ketik ABSEN berkali-kali
   const processedSenders = new Set<string>();
   const results: ImportAbsenItemResult[] = [];
@@ -335,9 +314,10 @@ export function processImportedChat(
     }
 
     // 2. PERIKSA MEMBER TAG (USERNAME TIKTOK)
+    // HANYA DARI DATA GROUP MEMBER WHATSAPP (BUKAN DARI TEKS PESAN CHAT)
     let finalMemberTag = '';
 
-    // A. PRIORITAS UTAMA (#1): Ambil member tag resmi yang sudah tersimpan di data grup WhatsApp untuk member ini
+    // A. Ambil member tag resmi yang sudah tersimpan di data grup WhatsApp untuk member ini
     if (matchedMember && matchedMember.member_tag) {
       const existingTag = matchedMember.member_tag.replace(/^@/, '').trim().toLowerCase();
       if (existingTag && !/^\d{10,}$/.test(existingTag) && isValidTikTokUsername(existingTag)) {
@@ -345,7 +325,7 @@ export function processImportedChat(
       }
     }
 
-    // B. Cek apakah nomor telepon pengirim cocok dengan member grup lain yang memiliki member_tag resmi
+    // B. Cek apakah nomor telepon pengirim cocok dengan member grup WhatsApp lain yang memiliki member_tag resmi
     if (!finalMemberTag && (normalizedPhone || matchedMember?.phone)) {
       const targetPhone = (normalizedPhone || matchedMember?.phone || '').replace(/\D/g, '');
       if (targetPhone.length >= 7) {
@@ -364,23 +344,7 @@ export function processImportedChat(
       }
     }
 
-    // C. Jika belum ada tag di grup, cek apakah ada mention tag eksplisit di dalam pesan chat itu sendiri (contoh: "ABSEN @nbil2705" atau "tt: nbil2705")
-    if (!finalMemberTag) {
-      const tagFromMsg = extractMemberTagFromMessage(msg.text, contactName || matchedMember?.push_name, knownUsernames);
-      if (tagFromMsg) {
-        finalMemberTag = tagFromMsg.trim().toLowerCase();
-      }
-    }
-
-    // D. Cek apakah pengirim pernah mengirimkan tag TikTok eksplisit di pesan LAIN dalam riwayat chat (Two-pass parser)
-    if (!finalMemberTag) {
-      const tagFromHistory = senderDiscoveredTags.get(senderKey) || (senderDigits ? senderDiscoveredTags.get(senderDigits) : undefined);
-      if (tagFromHistory && isValidTikTokUsername(tagFromHistory)) {
-        finalMemberTag = tagFromHistory;
-      }
-    }
-
-    // E. Cek apakah nomor telepon pengirim cocok dengan peserta giveaway TikTok yang tersimpan di DB
+    // C. Cek apakah nomor telepon pengirim cocok dengan nomor WA yang terdaftar pada peserta giveaway di database
     if (!finalMemberTag && (normalizedPhone || matchedMember?.phone)) {
       const targetPhone = (normalizedPhone || matchedMember?.phone || '').replace(/\D/g, '');
       if (targetPhone.length >= 7) {
@@ -391,18 +355,6 @@ export function processImportedChat(
         });
         if (matchedParticipant && isValidTikTokUsername(matchedParticipant.username.toLowerCase())) {
           finalMemberTag = matchedParticipant.username.toLowerCase();
-        }
-      }
-    }
-
-    // F. Jika masih belum ada, gunakan nama kontak pengirim jika COCOK dengan peserta giveaway yang terdaftar
-    if (!finalMemberTag && contactName) {
-      const cleanNameAsTag = contactName.replace(/[^a-zA-Z0-9._]/g, '').trim().toLowerCase();
-      if (isValidTikTokUsername(cleanNameAsTag)) {
-        // Hanya jadikan tag jika nama kontak persis cocok dengan username peserta TikTok giveaway yang sudah terdaftar
-        const matchParticipant = existingParticipants.find(p => p.username.toLowerCase() === cleanNameAsTag);
-        if (matchParticipant) {
-          finalMemberTag = matchParticipant.username.toLowerCase();
         }
       }
     }
