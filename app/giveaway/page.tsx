@@ -369,8 +369,16 @@ function SpinWheel({
         ctx.translate(cx, cy);
         ctx.rotate(startAngle + slice / 2);
 
-        const label = participants[i].nickname || participants[i].username;
-        const maxLen = n > 10 ? (isBig ? 18 : 12) : (isBig ? 22 : 16);
+        // Format nama dan nomor belakang 4 terakhir (misal: "Sayang ·9226" atau "Pasha ·9892")
+        let label = participants[i].nickname || participants[i].username;
+        if (participants[i].wa_phone) {
+          const phDigits = participants[i].wa_phone!.replace(/\D/g, '');
+          const l4 = phDigits.length >= 4 ? phDigits.slice(-4) : '';
+          if (l4 && !label.includes(l4)) {
+            label = `${label} ·${l4}`;
+          }
+        }
+        const maxLen = n > 10 ? (isBig ? 20 : 15) : (isBig ? 24 : 18);
         const displayLabel = label.length > maxLen ? label.slice(0, maxLen) + '…' : label;
         const fontSize = Math.max(isBig ? 11 : 8, Math.min(isBig ? 20 : 13, (R * 0.38) / Math.max(1, Math.sqrt(n))));
         ctx.font = `bold ${fontSize}px Inter, sans-serif`;
