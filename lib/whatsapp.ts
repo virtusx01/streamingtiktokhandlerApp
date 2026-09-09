@@ -52,14 +52,14 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
         if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
-    // 2. Explicit prefix seperti "tt: ilvy0uv", "tiktok: ilvy0uv", "username: ilvy0uv", "tag: ilvy0uv"
-    const prefixMatch = cleanBody.match(/(?:tt|tiktok|username|user|tag|akun)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
+    // 2. Explicit prefix seperti "tt: ilvy0uv", "tiktok: ilvy0uv", "username: ilvy0uv", "tag: ilvy0uv", "id: ilvy0uv"
+    const prefixMatch = cleanBody.match(/(?:tt|tiktok|username|user|tag|akun|id|ig)\s*[:=\-]?\s*@?([a-zA-Z0-9._]{2,32})/i);
     if (prefixMatch && prefixMatch[1]) {
         const norm = normalizeTag(prefixMatch[1]);
         if (!WA_STOP_WORDS.has(norm) && isValidTikTokUsername(norm)) return norm;
     }
 
-    // 3. Multi-line format (contoh di WhatsApp: baris 1 "hykeoony", baris 2 "absen")
+    // 3. Multi-line format (contoh di WhatsApp: baris 1 "hykeoony", baris 2 "absen" atau sebaliknya)
     const lines = cleanBody.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
     if (lines.length > 1) {
         for (const line of lines) {
@@ -92,6 +92,15 @@ export function extractMemberTagFromMessage(messageBody: string, pushName?: stri
     for (const u of knownUsernames) {
         if (u && u.length >= 3 && new RegExp('\\b' + u + '\\b', 'i').test(cleanBody)) {
             return u.toLowerCase();
+        }
+    }
+
+    // 7. Jika seluruh pesan adalah satu kata username valid (bukan kata stop words & bukan angka panjang)
+    const singleWord = cleanBody.replace(/^[@~]/, '').trim();
+    if (/^[a-z0-9._]{2,32}$/i.test(singleWord)) {
+        const norm = singleWord.toLowerCase();
+        if (!WA_STOP_WORDS.has(norm) && !/^\d{7,}$/.test(norm) && isValidTikTokUsername(norm)) {
+            return norm;
         }
     }
 
@@ -421,6 +430,36 @@ export async function initWhatsApp(forceReconnect = false): Promise<WASocket> {
                     }
                 } catch (e) {
                     console.error('[WA] messages.upsert handler error:', e);
+                }
+            });
+
+            // Listen to WhatsApp Baileys group member tag updates (GROUP_MEMBER_LABEL_CHANGE / member-tag event)
+            sock.ev.on('group.member-tag.update' as any, async (update: any) => {
+                try {
+                    if (!update || !update.label) return;
+                    const targetGroup = getSetting('giveaway_target_wa_group', '');
+                    const updateGroup = update.groupId || update.id;
+                    if (targetGroup && updateGroup && updateGroup !== targetGroup) return;
+
+                    const cleanLabel = (update.label || '').replace(/^@/, '').trim().toLowerCase();
+                    if (!cleanLabel || /^\d{10,}$/.test(cleanLabel) || !isValidTikTokUsername(cleanLabel)) return;
+
+                    const participant = update.participant || update.participantAlt;
+                    if (!participant) return;
+
+                    console.log(`[WA] 🏷️ Event group.member-tag.update diterima untuk ${participant}: "${cleanLabel}"`);
+
+                    const phone = participant.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+                    saveWaGroupMembers([{
+                        group_jid: updateGroup || targetGroup,
+                        jid: participant,
+                        phone: phone && !/^\d{15,}$/.test(phone) ? phone : '',
+                        member_tag: cleanLabel,
+                        push_name: '',
+                        role: 'member',
+                    }]);
+                } catch (e) {
+                    console.warn('[WA] group.member-tag.update handler error:', e);
                 }
             });
 
