@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { enqueueAdbActions, isAdminActionRequest } from '@/lib/adb-queue';
 import { getSetting } from '@/lib/db';
 import { prisma } from '@/lib/prisma';
+import { emitGiftEvent } from '@/lib/events';
+import { randomUUID } from 'node:crypto';
 
 export const runtime = 'nodejs';
 
@@ -64,10 +66,28 @@ export async function POST(req: Request) {
       eventType: 'manual_test',
       rewardName: typeof data.rewardName === 'string' ? data.rewardName.slice(0, 128) : 'Reward',
     });
+    const rewardName = typeof data.rewardName === 'string' ? data.rewardName.slice(0, 128) : 'Reward';
+    const eventId = `adb-test-${randomUUID()}`;
+    emitGiftEvent({
+      eventId,
+      msgId: eventId,
+      giftName: rewardName,
+      namaHadiah: rewardName,
+      displayGiftName: rewardName,
+      nickname: 'Test Reward',
+      username: 'adb_reward_test',
+      repeatCount: 1,
+      repeatEnd: true,
+      timestamp: Date.now(),
+      isTest: true,
+      triggerRewardsEnabled: true,
+    });
+
     return NextResponse.json({
       success: true,
       queued: true,
       commandId,
+      notificationSent: true,
       device: Array.isArray(agent.devices) && agent.devices.length > 0
         ? (agent.devices[0] && typeof agent.devices[0] === 'object' && 'model' in agent.devices[0]
           ? String(agent.devices[0].model)

@@ -50,7 +50,9 @@ HP. Perubahan koordinat atau server tidak dapat memberikan izin Android itu.
 - Aksi yang masuk ke `enqueueAdbActions` dinormalisasi dan divalidasi di
   `lib/adb-queue.ts` (maksimal 20 aksi; jenis click, keyevent, swipe, text).
   Uji reward dari UI menggunakan `/api/trigger`, membuat command ADB langsung,
-  dan membaca status hasilnya; itu bukan simulasi event gift TikTok.
+  membaca status hasilnya, dan mengirim event gift uji langsung ke widget SSE
+  tanpa menunggu debounce gift live. Event uji memakai ID unik dan tidak
+  dibuang oleh content dedup.
 - `/api/events` mengirim SSE dan menghapus `actions`, `adbCommandId`, serta
   `adbStartToken` dari payload publik. Dengan demikian widget tidak menerima
   command ID atau konfirmasi selesai dari agent.

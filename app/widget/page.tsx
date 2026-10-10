@@ -73,6 +73,7 @@ interface NotificationItem {
     triggerRewardsEnabled?: boolean;
     rawComment?: string;
     executionDurationMs?: number;
+    isTest?: boolean;
 }
 
 interface WidgetConfig {
@@ -371,7 +372,7 @@ export default function WidgetPage() {
         
         // 3. Secondary Dedup (Content Hash - 3s window)
         const contentDedupId = `${payload.type}_content_${contentHash}`;
-        if (duplicateGuard.current.has(contentDedupId)) {
+        if (!data.isTest && duplicateGuard.current.has(contentDedupId)) {
             console.log(`[Widget] Dropped content duplicate: ${contentDedupId}`);
             return;
         }
@@ -383,8 +384,10 @@ export default function WidgetPage() {
             setTimeout(() => duplicateGuard.current.delete(idKey), 10000); // 10s window
         }
         
-        duplicateGuard.current.add(contentDedupId);
-        setTimeout(() => duplicateGuard.current.delete(contentDedupId), 3000); // 3s window for content match
+        if (!data.isTest) {
+            duplicateGuard.current.add(contentDedupId);
+            setTimeout(() => duplicateGuard.current.delete(contentDedupId), 3000); // 3s window for content match
+        }
  
         if (payload.type === 'like') {
             if (data.isTest) {
@@ -610,6 +613,7 @@ export default function WidgetPage() {
         adbData: (type === 'gift' || type === 'like') ? data.actions : null,
         priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || "",
         executionDurationMs,
+        isTest: data.isTest === true,
     };
 
     const queue = notificationQueue.current;
@@ -717,7 +721,7 @@ export default function WidgetPage() {
     lastProcessTime.current = Date.now();
 
     const item = notificationQueue.current.shift()!;
-    if (!isTypeEnabled(item.type)) {
+    if (!isTypeEnabled(item.type) && !item.isTest) {
         isProcessingQueue.current = false;
         processQueue();
         return;
@@ -1056,7 +1060,7 @@ export default function WidgetPage() {
       <AudioStatus locked={audioLocked} onClick={() => audioContextRef.current?.resume().then(() => setAudioLocked(false))} />
       <audio ref={silentAudioRef} src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" loop autoPlay style={{ display: 'none' }} />
 
-      {activeNotification && notifVisible && !hasConfiguredEventElement && (
+      {activeNotification && notifVisible && (activeNotification.isTest || !hasConfiguredEventElement) && (
         <div
           role="status"
           aria-live="polite"
@@ -1083,7 +1087,7 @@ export default function WidgetPage() {
       <div ref={canvasRef} className="w-full h-full relative" onClick={() => showEditor && setSelectedId(null)}>
         {elements.map(el => {
              const state = getElementState(el, activeNotification?.type || settingsTab);
-             const isVisible = showEditor || (activeNotification && notifVisible && isTypeEnabled(activeNotification.type) && (!el.eventTypes || el.eventTypes.includes(activeNotification.type)));
+             const isVisible = showEditor || (activeNotification && notifVisible && (isTypeEnabled(activeNotification.type) || activeNotification.isTest) && (!el.eventTypes || el.eventTypes.includes(activeNotification.type)));
              return (
               <div key={el.id} onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, el.id, "move"); }} style={{ left: state.x, top: state.y, width: state.width, height: state.height, position: 'absolute', zIndex: 10, outline: (showEditor && selectedId === el.id) ? '2px solid #10b981' : 'none', opacity: isVisible ? 1 : 0, transition: 'opacity 0.4s ease-in-out' }}>
                 {el.type === "text" ? (
