@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isAdbAgentConfigured, isAuthorizedAdbAgent } from '@/lib/adb-agent-auth';
-import { supabaseAdmin } from '@/lib/supabase';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
@@ -18,28 +19,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Status agent tidak valid.' }, { status: 400 });
     }
 
-    const devices = body.devices.slice(0, 10).map((device: unknown) => {
-      if (!device || typeof device !== 'object') return null;
+    const devices = body.devices.slice(0, 10).flatMap((device: unknown) => {
+      if (!device || typeof device !== 'object') return [];
       const value = device as Record<string, unknown>;
-      return {
+      return [{
         serial: typeof value.serial === 'string' ? value.serial.slice(0, 128) : '',
         status: typeof value.status === 'string' ? value.status.slice(0, 32) : '',
         isWireless: Boolean(value.isWireless),
         model: typeof value.model === 'string' ? value.model.slice(0, 128) : 'Unknown Device',
-      };
-    }).filter(Boolean);
-
-    const { error } = await supabaseAdmin.from('adb_agents').upsert({
-      agent_id: body.agentId.slice(0, 128),
-      last_seen: new Date().toISOString(),
-      adb_connected: body.connected,
-      devices,
+      }];
     });
 
-    if (error) {
-      console.error('[ADB Agent] Failed to update heartbeat:', error.message);
-      return NextResponse.json({ error: 'Gagal menyimpan status agent.' }, { status: 500 });
-    }
+    await prisma.adbAgent.upsert({
+      where: { agentId: body.agentId.slice(0, 128) },
+      create: {
+        agentId: body.agentId.slice(0, 128),
+        lastSeen: new Date(),
+        adbConnected: body.connected,
+        devices: devices as Prisma.InputJsonArray,
+      },
+      update: {
+        lastSeen: new Date(),
+        adbConnected: body.connected,
+        devices: devices as Prisma.InputJsonArray,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

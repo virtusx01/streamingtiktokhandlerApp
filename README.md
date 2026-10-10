@@ -9,8 +9,10 @@ running; it does not run the TikTok listener.
 
 ### One-time setup
 
-1. Run `supabase/migrations/20261010000000_adb_agent_queue.sql` in the Supabase
-   SQL Editor used by this app.
+1. Set `DATABASE_URL` and `DIRECT_URL` in Render to your Supabase PostgreSQL
+   connection strings. `DATABASE_URL` should use the transaction pooler
+   (port 6543); `DIRECT_URL` should use a direct or session connection (port
+   5432). Keep both values private and never expose them to the browser.
 2. Add two different long random secrets to the Render service environment:
    `ADB_AGENT_TOKEN` and `TIKTOK_LISTENER_TOKEN`. The listener token prevents
    public event requests from triggering configured phone actions. Never commit
@@ -26,9 +28,18 @@ running; it does not run the TikTok listener.
    its build command to
    `python3 -m pip install -r requirements.txt && npm ci && npm run build`;
    keep its start command as `npm start`.
-3. Install Android Platform Tools on the laptop, enable USB debugging on the
+3. Apply pending database migrations from the project root:
+
+   ```powershell
+   npm run db:migrate:deploy
+   ```
+
+   The command loads `DATABASE_URL` and `DIRECT_URL` from the local Next.js
+   environment files and applies the Prisma migrations. Render also needs the
+   database URLs to access the ADB queue and agent status through Prisma.
+4. Install Android Platform Tools on the laptop, enable USB debugging on the
    phone, connect it by USB, and accept the USB debugging prompt.
-4. In PowerShell, set the Render URL and the same token, then start the agent:
+5. In PowerShell, set the Render URL and the same token, then start the agent:
 
    ```powershell
    $env:RENDER_APP_URL = "https://your-service.onrender.com"
@@ -38,7 +49,7 @@ running; it does not run the TikTok listener.
 
    If `adb` is not on `PATH`, also set `$env:ADB_PATH` to the full path of
    `adb.exe`.
-5. Confirm the dashboard reports the ADB device as connected. Keep the agent
+6. Confirm the dashboard reports the ADB device as connected. Keep the agent
    process running while streaming. The agent polls the server for queued
    actions and reports completion or errors.
 

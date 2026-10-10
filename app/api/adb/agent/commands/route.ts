@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isAdbAgentConfigured, isAuthorizedAdbAgent } from '@/lib/adb-agent-auth';
-import { supabaseAdmin } from '@/lib/supabase';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
@@ -13,14 +14,17 @@ export async function GET(req: Request) {
   }
 
   const agentId = req.headers.get('x-adb-agent-id')?.slice(0, 128) || 'adb-agent';
-  const { data, error } = await supabaseAdmin.rpc('claim_adb_command', { p_agent_id: agentId });
-  if (error) {
-    console.error('[ADB Agent] Failed to claim command:', error.message);
+  try {
+    const rows = await prisma.$queryRaw<Array<{ command: unknown }>>(
+      Prisma.sql`select public.claim_adb_command(${agentId}) as command`,
+    );
+    const command = rows[0]?.command;
+    if (!command) return new Response(null, { status: 204 });
+    return NextResponse.json({ command });
+  } catch (error) {
+    console.error('[ADB Agent] Failed to claim command:', error);
     return NextResponse.json({ error: 'Gagal mengambil antrean ADB.' }, { status: 500 });
   }
-
-  if (!data) return new Response(null, { status: 204 });
-  return NextResponse.json({ command: data });
 }
 
 export async function POST(req: Request) {
@@ -41,23 +45,27 @@ export async function POST(req: Request) {
       output: typeof body.output === 'string' ? body.output.slice(0, 4000) : '',
       error: typeof body.error === 'string' ? body.error.slice(0, 2000) : '',
     };
-    const { data, error } = await supabaseAdmin
-      .from('adb_commands')
-      .update({
-        status: body.success ? 'completed' : 'failed',
-        result,
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', body.commandId)
-      .eq('status', 'processing')
-      .select('id')
-      .maybeSingle();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.commandId)) {
+      return NextResponse.json({ error: 'commandId tidak valid.' }, { status: 400 });
+    }
 
-    if (error) {
-      console.error('[ADB Agent] Failed to report command result:', error.message);
+    const updated = await prisma.adbCommand.updateMany({
+      where: { id: body.commandId, status: 'processing' },
+      data: {
+        status: body.success ? 'completed' : 'failed',
+        result: result as Prisma.InputJsonObject,
+        completedAt: new Date(),
+      },
+    });
+
+    if (updated.count === 0) {
+      return NextResponse.json({ error: 'Perintah tidak ditemukan atau sudah diproses.' }, { status: 409 });
+    }
+
+    if (updated.count !== 1) {
+      console.error(`[ADB Agent] Unexpected number of updated commands: ${updated.count}`);
       return NextResponse.json({ error: 'Gagal menyimpan hasil aksi ADB.' }, { status: 500 });
     }
-    if (!data) return NextResponse.json({ error: 'Perintah tidak ditemukan atau sudah diproses.' }, { status: 409 });
 
     return NextResponse.json({ success: true });
   } catch (error) {

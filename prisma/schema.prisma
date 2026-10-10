@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model AdbCommand {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actions     Json      @db.JsonB
+  metadata    Json      @default("{}") @db.JsonB
+  status      String    @default("queued")
+  claimedBy   String?   @map("claimed_by")
+  claimedAt   DateTime? @map("claimed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  result      Json?     @db.JsonB
+
+  @@map("adb_commands")
+}
+
+model AdbAgent {
+  agentId      String   @id @map("agent_id")
+  lastSeen     DateTime @default(now()) @map("last_seen") @db.Timestamptz(6)
+  adbConnected Boolean  @default(false) @map("adb_connected")
+  devices      Json     @default("[]") @db.JsonB
+
+  @@map("adb_agents")
+}

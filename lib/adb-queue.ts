@@ -1,4 +1,5 @@
-import { supabaseAdmin } from '@/lib/supabase';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 
 export type AdbAction =
@@ -53,9 +54,7 @@ export function normalizeAdbActions(value: unknown): AdbAction[] {
     if (action.type === 'keyevent') {
       const rawKeycode = String(action.keycode ?? '');
       const numericKeycode = Number(rawKeycode);
-      if (
-        (Number.isInteger(numericKeycode) && numericKeycode >= 0 && numericKeycode <= 288)
-      ) {
+      if (Number.isInteger(numericKeycode) && numericKeycode >= 0 && numericKeycode <= 288) {
         return { type: 'keyevent', keycode: numericKeycode, delayAfter };
       }
       if (!/^KEYCODE_[A-Z0-9_]+$/.test(rawKeycode)) {
@@ -100,18 +99,15 @@ export function normalizeAdbActions(value: unknown): AdbAction[] {
 
 export async function enqueueAdbActions(actions: unknown[], metadata: Record<string, unknown> = {}) {
   const normalizedActions = normalizeAdbActions(actions);
-  const { data, error } = await supabaseAdmin
-    .from('adb_commands')
-    .insert({ actions: normalizedActions, metadata, status: 'queued' })
-    .select('id')
-    .single();
-
-  if (error) {
-    console.error('[ADB Queue] Failed to enqueue actions:', error.message);
-    throw new Error('Gagal mengantrekan aksi ADB. Periksa tabel adb_commands di Supabase.');
-  }
-
-  return data.id as string;
+  const jsonMetadata = JSON.parse(JSON.stringify(metadata)) as Prisma.InputJsonObject;
+  const command = await prisma.adbCommand.create({
+    data: {
+      actions: normalizedActions as unknown as Prisma.InputJsonArray,
+      metadata: jsonMetadata,
+    },
+    select: { id: true },
+  });
+  return command.id;
 }
 
 export async function isAdminActionRequest(req: Request): Promise<boolean> {
