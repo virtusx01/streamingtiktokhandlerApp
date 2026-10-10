@@ -24,10 +24,10 @@ running; it does not run the TikTok listener.
 
    Run it twice and save the two values temporarily so you can enter them in
    Render and use the ADB token on the laptop.
-   If Render is not already installing the Python listener dependencies, set
-   its build command to
-   `python3 -m pip install -r requirements.txt && npm ci && npm run build`;
-   keep its start command as `npm start`.
+   In Render, set the build command to
+   `python3 -m pip install -r requirements.txt && npm ci && npm run build`
+   so both the Python TikTok listener dependencies and Node dependencies are
+   installed. Keep the start command as `npm start`.
 3. Apply pending database migrations from the project root:
 
    ```powershell
@@ -39,7 +39,20 @@ running; it does not run the TikTok listener.
    database URLs to access the ADB queue and agent status through Prisma.
 4. Install Android Platform Tools on the laptop, enable USB debugging on the
    phone, connect it by USB, and accept the USB debugging prompt.
-5. In PowerShell, set the Render URL and the same token, then start the agent:
+5. On Windows, open a terminal in the project folder and run:
+
+   ```powershell
+   npm run gui
+   ```
+
+   This opens the GUI in a separate window. You can also double-click
+   `scripts\start_adb_agent_gui.bat`. Enter the Render URL and
+   `ADB_AGENT_TOKEN`, select `adb.exe` if it is not detected, then use
+   **Cek HP USB** and **Sambungkan agent**. Use **Cek status Render** to confirm
+   the remote agent heartbeat. The GUI can remember the token encrypted for
+   your Windows user with DPAPI.
+
+   Or start the agent manually from PowerShell:
 
    ```powershell
    $env:RENDER_APP_URL = "https://your-service.onrender.com"
