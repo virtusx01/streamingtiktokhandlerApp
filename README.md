@@ -75,8 +75,11 @@ running; it does not run the TikTok listener.
    It displays the notifications and settings configured by the admin; editor
    and configuration controls remain admin-only. Gift and like reward actions
    are queued server-side when their events are processed and executed in order
-   by the local agent. The widget notification queue remains independent of
-   ADB completion. Apply pending database migrations before deploying changes.
+   by the local agent. When Reward Actions (ADB) are active, the widget
+   notification is emitted only after the agent reports that the matching ADB
+   command completed successfully; failed ADB commands do not produce that
+   notification. Events without queued ADB actions are emitted immediately.
+   Apply pending database migrations before deploying changes.
 
 If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
 or key events, Android has denied input injection even though USB debugging is

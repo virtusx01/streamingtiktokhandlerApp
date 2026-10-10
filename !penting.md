@@ -51,36 +51,33 @@ HP. Perubahan koordinat atau server tidak dapat memberikan izin Android itu.
 - Aksi yang masuk ke `enqueueAdbActions` dinormalisasi dan divalidasi di
   `lib/adb-queue.ts` (maksimal 20 aksi; jenis click, keyevent, swipe, text).
   Uji reward dari UI menggunakan `/api/trigger`, membuat command ADB langsung,
-  membaca status hasilnya, dan mengirim event gift uji langsung ke widget SSE
-  tanpa menunggu debounce gift live. Event uji memakai ID unik dan tidak
-  dibuang oleh content dedup.
+  lalu status hasilnya dibaca oleh UI. Payload notifikasi uji disimpan sebagai
+  metadata server-side dan baru dikirim ke widget setelah agent melaporkan
+  aksi ADB berhasil.
 - `/api/events` mengirim SSE dan menghapus `actions`, `adbCommandId`, serta
-  `adbStartToken` dari payload publik. Dengan demikian widget tidak menerima
-  command ID atau konfirmasi selesai dari agent.
+  metadata internal sebelum payload dikirim ke publik. Agent tidak menerima
+  payload notifikasi di response claim.
 
-### Batas sinkronisasi widget dan ADB saat ini
+### Sinkronisasi widget dan hasil aksi ADB
 
-Queue notifikasi di `app/widget/page.tsx` bersifat serial. Implementasi saat ini
-menghitung perkiraan waktu aksi ADB dari durasi swipe dan `delayAfter`, lalu
-menahan giliran widget setidaknya selama perkiraan itu. Ini bukan konfirmasi
-bahwa ADB benar-benar mulai/selesai: widget dan command ADB masih dua queue
-terpisah, tidak diikat ke `commandId`, dan SSE tidak mengirim acknowledgment.
-Jika ADB lambat/gagal/offline, notifikasi dapat selesai lebih dahulu atau item
-berikutnya tampil saat command sebelumnya belum selesai.
+Untuk gift/like yang memiliki aksi aktif dan test reward, payload notifikasi
+disimpan pada metadata command dan tidak dikirim saat command diklaim. Setelah
+agent menyelesaikan seluruh aksi ADB dan melaporkan hasil berhasil, server
+mengubah status command menjadi `completed`, lalu mengirim notifikasi lewat
+SSE. Jika aksi gagal, server menyimpan status `failed` dan notifikasi reward
+terkait tidak dikirim. Event tanpa aksi ADB tetap langsung dikirim.
 
-Notifikasi kini dibuat terlihat sebelum widget menunggu hasil prefetch TTS.
-Agent lokal memeriksa queue setiap 250 ms untuk mengurangi jeda sejak command
-masuk. Karena ADB masih dieksekusi melalui polling HTTP/database dari laptop
-ke Render, latensi jaringan dan siklus polling tetap membuat waktu mulai tidak
-dapat dijamin identik hingga milidetik.
+Karena notifikasi menunggu laporan selesai dari agent, aksi ADB dimulai dan
+diselesaikan terlebih dahulu. Setelah itu masih ada latensi HTTP, SSE, render
+browser, dan antrean notifikasi sebelum overlay terlihat. Jika agent offline,
+notifikasi reward menunggu sampai aksi berhasil dilaporkan. Status `completed`
+berarti seluruh perintah ADB berhasil dijalankan oleh agent; bukan verifikasi
+visual bahwa aplikasi Android merespons aksi sesuai harapan.
 
-Jangan anggap sinkronisasi selesai hanya karena build sukses. Untuk jaminan
-"notifikasi dan aksi mulai bersama; item berikutnya menunggu hasil command
-ADB", perubahan berikutnya perlu menghubungkan setiap event dengan ID command,
-mengirim status hasil secara aman ke widget (misalnya endpoint/SSE status
-khusus), dan membuat queue menunggu hasil terminal `completed`/`failed` serta
-durasi minimum overlay. Tetapkan juga perilaku jika agent offline atau hasil
-tidak pernah diterima.
+Perintah ADB tetap serial pada satu agent. Notifikasi di browser juga masuk
+queue serial. Jika dibutuhkan jaminan bahwa item kedua menunggu sampai tampilan
+notifikasi pertama selesai, diperlukan acknowledgment browser-ke-server dan
+gate pada pengambilan command berikutnya; durasi estimasi saja bukan jaminan.
 
 Widget menggambar notifikasi custom melalui elemen canvas yang dikonfigurasi.
 Jika tidak ada elemen yang cocok dengan tipe event, gunakan fallback notifikasi
@@ -178,10 +175,9 @@ proses in-memory dan listener bukan worker serverless yang tahan suspend.
   punya replay event. Satu instance/restart dapat kehilangan event atau
   memutus sinkronisasi; multi-instance memerlukan pub/sub terdistribusi dan
   state tahan lama.
-- `README.md` masih menyebut queue widget independen dari hasil ADB. Itu
-  menggambarkan batas implementasi, tetapi tidak memenuhi kebutuhan sinkronisasi
-  yang diinginkan. Perbarui README setelah acknowledgment ADB benar-benar
-  diterapkan.
+- README dan catatan ini menjelaskan notifikasi reward dikirim setelah hasil
+  aksi ADB berhasil diterima server. Event SSE tetap bergantung pada emitter
+  proses Render yang sama.
 - Untuk event/ADB, uji minimal: event biasa, duplicate event ID, event gift
   beruntun, aksi lebih dari satu, agent offline, aksi gagal, serta dua event
   berurutan. Tes Android nyata tetap diperlukan untuk memastikan izin dan aksi

@@ -2,8 +2,25 @@ import { NextResponse } from 'next/server';
 import { isAdbAgentConfigured, isAuthorizedAdbAgent } from '@/lib/adb-agent-auth';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { emitGiftEvent, emitLikeEvent } from '@/lib/events';
 
 export const runtime = 'nodejs';
+
+function emitCommandWidgetEvent(metadata: unknown) {
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return;
+
+  const widgetEvent = (metadata as Record<string, unknown>).widgetEvent;
+  if (typeof widgetEvent !== 'object' || widgetEvent === null || Array.isArray(widgetEvent)) return;
+
+  const event = widgetEvent as Record<string, unknown>;
+  if (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
+
+  if (event.type === 'gift') {
+    emitGiftEvent(event.data);
+  } else if (event.type === 'like') {
+    emitLikeEvent(event.data);
+  }
+}
 
 export async function GET(req: Request) {
   if (!isAdbAgentConfigured()) {
@@ -20,6 +37,14 @@ export async function GET(req: Request) {
     );
     const command = rows[0]?.command;
     if (!command) return new Response(null, { status: 204 });
+
+    if (typeof command === 'object' && command !== null && !Array.isArray(command)) {
+      const claimedCommand = command as Record<string, unknown>;
+      const agentCommand = { ...claimedCommand };
+      delete agentCommand.metadata;
+      return NextResponse.json({ command: agentCommand });
+    }
+
     return NextResponse.json({ command });
   } catch (error) {
     console.error('[ADB Agent] Failed to claim command:', error);
@@ -57,23 +82,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'commandId tidak valid.' }, { status: 400 });
     }
 
-    const updated = await prisma.adbCommand.updateMany({
-      where: { id: body.commandId, status: 'processing' },
-      data: {
-        status: body.success ? 'completed' : 'failed',
-        result: result as Prisma.InputJsonObject,
-        completedAt: new Date(),
-      },
+    const updateResult = await prisma.$transaction(async (transaction) => {
+      const updated = await transaction.adbCommand.updateMany({
+        where: { id: body.commandId, status: 'processing' },
+        data: {
+          status: body.success ? 'completed' : 'failed',
+          result: result as Prisma.InputJsonObject,
+          completedAt: new Date(),
+        },
+      });
+
+      if (updated.count !== 1) return { count: updated.count, metadata: null };
+
+      const command = await transaction.adbCommand.findUnique({
+        where: { id: body.commandId },
+        select: { metadata: true },
+      });
+      return { count: updated.count, metadata: command?.metadata };
     });
 
-    if (updated.count === 0) {
+    if (updateResult.count === 0) {
       return NextResponse.json({ error: 'Perintah tidak ditemukan atau sudah diproses.' }, { status: 409 });
     }
 
-    if (updated.count !== 1) {
-      console.error(`[ADB Agent] Unexpected number of updated commands: ${updated.count}`);
+    if (updateResult.count !== 1) {
+      console.error(`[ADB Agent] Unexpected number of updated commands: ${updateResult.count}`);
       return NextResponse.json({ error: 'Gagal menyimpan hasil aksi ADB.' }, { status: 500 });
     }
+
+    if (body.success) emitCommandWidgetEvent(updateResult.metadata);
 
     return NextResponse.json({ success: true });
   } catch (error) {

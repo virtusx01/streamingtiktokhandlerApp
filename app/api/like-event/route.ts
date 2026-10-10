@@ -77,6 +77,12 @@ export async function POST(req: Request) {
     const actions = requestedActions ?? rewardActions;
     if (actions !== undefined) likeData.actions = actions;
     const triggerRewardsEnabled = getSetting('triggerRewardsEnabled', true);
+    const widgetEvent = {
+      ...likeData,
+      type: 'like',
+      triggerRewardsEnabled,
+    };
+    let notificationDeferredUntilAdbClaim = false;
 
     if (allowAdbActions && triggerRewardsEnabled && Array.isArray(actions) && actions.length > 0) {
       const commandId = await enqueueAdbActions(actions, {
@@ -84,16 +90,13 @@ export async function POST(req: Request) {
         username,
         nickname,
         milestoneCount: isMilestone ? milestoneCount : undefined,
+        widgetEvent: { type: 'like', data: widgetEvent },
       });
+      notificationDeferredUntilAdbClaim = true;
       console.log(`[ADB Queue] Like action queued: ${commandId}`);
     }
 
-    // Notify Widget via SSE
-    emitLikeEvent({
-      ...likeData,
-      type: 'like',
-      triggerRewardsEnabled
-    });
+    if (!notificationDeferredUntilAdbClaim) emitLikeEvent(widgetEvent);
 
     return NextResponse.json({ success: true, isMilestone, milestoneMode });
   } catch (err: any) {
