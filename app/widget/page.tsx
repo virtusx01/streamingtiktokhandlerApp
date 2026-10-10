@@ -74,6 +74,7 @@ interface NotificationItem {
     prefetchedAudioUrl?: string;
     triggerRewardsEnabled?: boolean;
     rawComment?: string;
+    executionDurationMs?: number;
 }
 
 interface WidgetConfig {
@@ -596,12 +597,21 @@ export default function WidgetPage() {
         voiceModel = currentConfig.giftVoice;
     }
 
+    const adbActions = Array.isArray(data.actions) ? data.actions : [];
+    const executionDurationMs = adbActions.reduce((sum: number, action: any) => {
+        const delay = Number(action?.delayAfter ?? 0) || 0;
+        if (action?.type === 'swipe') return sum + (Math.max(300, Number(action.swipe?.duration ?? 0) || 0) + delay);
+        if (action?.type === 'click' || action?.type === 'keyevent' || action?.type === 'text') return sum + 250 + delay;
+        return sum + 300 + delay;
+    }, 0) || 1200;
+
     const item: NotificationItem = {
         id: Math.random().toString(36).substr(2, 9), type, giftName: data.giftName || "", namaHadiah: data.namaHadiah || data.giftName || "Hadiah",
         nickname: data.nickname || data.username || "Viewer", username: data.username || "Viewer", message: voiceMessage,
         likeCount: data.likeCount, repeatCount: data.repeatCount || 1, repeatEnd: data.repeatEnd ?? true, msgId: data.msgId,
         adbData: (type === 'gift' || type === 'like') ? data.actions : null,
-        priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || ""
+        priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || "",
+        executionDurationMs,
     };
 
     const queue = notificationQueue.current;
@@ -729,6 +739,8 @@ export default function WidgetPage() {
     if (qLen > 15) { displayDuration = 800; skipMusic = true; }
     if (qLen > 30) { displayDuration = 400; skipTTS = item.priority < 2; skipMusic = true; }
 
+    const adbHoldDurationMs = Math.max(displayDuration, item.executionDurationMs ?? 1200);
+
     // TTS LOGIC
     let ttsBuffer: AudioBuffer | null = null;
     let itemTtsEnabled = true;
@@ -781,6 +793,12 @@ export default function WidgetPage() {
         await new Promise(r => setTimeout(r, displayDuration));
     } else if (!interruptFlag.current) {
         await new Promise(r => setTimeout(r, displayDuration));
+    }
+
+    // Hold for the full item lifetime so the next notification waits until both UI and ADB work finish
+    const totalItemHoldMs = Math.max(adbHoldDurationMs, displayDuration, 1500);
+    if (!interruptFlag.current) {
+      await new Promise(r => setTimeout(r, totalItemHoldMs - displayDuration));
     }
 
     setNotifVisible(false);
