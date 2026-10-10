@@ -1284,8 +1284,6 @@ export default function Home() {
                       config={config.rewards["Like Milestone"]}
                       onChange={(newC) => updateReward("Like Milestone", newC)}
                       onRemove={() => {}} // Handle empty or use global remove
-                      testEndpoint="/api/like-event"
-                      testPayloadExtras={{ isMilestone: true, type: 'like' }}
                     />
                 </div>
               )}

@@ -33,8 +33,6 @@ interface TriggerConfiguratorProps {
   onRemove: () => void;
   onRename?: (oldName: string, newName: string) => void;
   availableSuggestions?: string[];
-  testEndpoint?: string;
-  testPayloadExtras?: any;
 }
 
 const defaultAction: ActionConfig = {
@@ -47,12 +45,11 @@ export default function TriggerConfigurator({
   onChange, 
   onRemove, 
   onRename, 
-  availableSuggestions = [],
-  testEndpoint = "/api/gift-event",
-  testPayloadExtras = {}
+  availableSuggestions = []
 }: TriggerConfiguratorProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
   const [targetField, setTargetField] = useState<{index: number, type: "click" | "swipeStart" | "swipeEnd"}>({index: 0, type: "click"});
   
   // Renaming state
@@ -72,24 +69,49 @@ export default function TriggerConfigurator({
 
   const handleTest = async () => {
     setTesting(true);
+    setTestMessage("");
     try {
-      const res = await fetch(testEndpoint, {
+      const res = await fetch("/api/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          actions: actions, // Send current UI actions
-          giftName,
-          nickname: "Tester",
-          username: "tester",
-          ...testPayloadExtras
+          actions,
+          rewardName: giftName,
         }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Testing failed");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Gagal mengirim aksi uji.");
       }
-    } catch (err: any) {
-      alert("Test failed: " + err.message);
+
+      const queued = await res.json();
+      if (typeof queued.commandId !== "string") {
+        throw new Error("Server tidak mengembalikan ID aksi uji.");
+      }
+
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const statusResponse = await fetch(
+          `/api/trigger?commandId=${encodeURIComponent(queued.commandId)}`,
+          { cache: "no-store" },
+        );
+        const statusData = await statusResponse.json().catch(() => null);
+        if (!statusResponse.ok) {
+          throw new Error(statusData?.error || "Gagal membaca hasil aksi uji.");
+        }
+        if (statusData.status === "completed") {
+          setTestMessage(`Berhasil dijalankan di ${queued.device || "HP"}.`);
+          return;
+        }
+        if (statusData.status === "failed") {
+          throw new Error(statusData.error || "Agent gagal menjalankan aksi ADB.");
+        }
+      }
+
+      throw new Error("Agent belum menyelesaikan aksi dalam 60 detik. Periksa log agent.");
+    } catch (err: unknown) {
+      setTestMessage(`Gagal: ${err instanceof Error ? err.message : "Terjadi kesalahan tidak dikenal."}`);
     } finally {
       setTesting(false);
     }
@@ -222,6 +244,15 @@ export default function TriggerConfigurator({
           </button>
         </div>
       </div>
+
+      {testMessage && (
+        <p
+          role="status"
+          className={`mb-4 text-xs ${testMessage.startsWith("Berhasil") ? "text-emerald-400" : "text-red-400"}`}
+        >
+          {testMessage}
+        </p>
+      )}
 
       <div className="space-y-6">
         {actions.map((action, index) => (

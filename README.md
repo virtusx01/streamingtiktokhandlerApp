@@ -66,7 +66,10 @@ running; it does not run the TikTok listener.
    process running while streaming. The agent polls the server for queued
    actions and reports completion or errors. Device screenshots are also
    captured by this local agent, not by running ADB on Render. ADB child
-   processes are launched without opening a console window.
+   processes are launched without opening a console window. The reward
+   configurator's **Test** button sends its current action sequence directly
+   to the ADB queue and waits for the agent's execution result; it does not
+   simulate a TikTok gift event.
 
 The laptop agent uses an outbound HTTPS connection and a bearer token; do not
 expose the ADB server or its USB connection to the public internet. The listener
