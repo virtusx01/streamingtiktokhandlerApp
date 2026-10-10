@@ -45,8 +45,9 @@ HP. Perubahan koordinat atau server tidak dapat memberikan izin Android itu.
   instance Render.
 - Command ADB disimpan di tabel `adb_commands`, diklaim secara atomik lewat
   fungsi PostgreSQL `claim_adb_command`, dan diproses berurutan oleh agent
-  polling. Command `processing` yang lebih tua dari 15 menit dapat diklaim
-  ulang. Status command: `queued`, `processing`, `completed`, `failed`.
+  polling lokal (interval 250 ms). Command `processing` yang lebih tua dari
+  15 menit dapat diklaim ulang. Status command: `queued`, `processing`,
+  `completed`, `failed`.
 - Aksi yang masuk ke `enqueueAdbActions` dinormalisasi dan divalidasi di
   `lib/adb-queue.ts` (maksimal 20 aksi; jenis click, keyevent, swipe, text).
   Uji reward dari UI menggunakan `/api/trigger`, membuat command ADB langsung,
@@ -66,6 +67,12 @@ bahwa ADB benar-benar mulai/selesai: widget dan command ADB masih dua queue
 terpisah, tidak diikat ke `commandId`, dan SSE tidak mengirim acknowledgment.
 Jika ADB lambat/gagal/offline, notifikasi dapat selesai lebih dahulu atau item
 berikutnya tampil saat command sebelumnya belum selesai.
+
+Notifikasi kini dibuat terlihat sebelum widget menunggu hasil prefetch TTS.
+Agent lokal memeriksa queue setiap 250 ms untuk mengurangi jeda sejak command
+masuk. Karena ADB masih dieksekusi melalui polling HTTP/database dari laptop
+ke Render, latensi jaringan dan siklus polling tetap membuat waktu mulai tidak
+dapat dijamin identik hingga milidetik.
 
 Jangan anggap sinkronisasi selesai hanya karena build sukses. Untuk jaminan
 "notifikasi dan aksi mulai bersama; item berikutnya menunggu hasil command

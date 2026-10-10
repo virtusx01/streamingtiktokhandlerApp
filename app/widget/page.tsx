@@ -729,6 +729,7 @@ export default function WidgetPage() {
 
     activeNotificationRef.current = item;
     setActiveNotification(item);
+    setNotifVisible(true);
     const cfg = configRef.current;
     const qLen = notificationQueue.current.length;
 
@@ -767,8 +768,6 @@ export default function WidgetPage() {
             }
         }
     }
-
-    setNotifVisible(true);
 
     // OPENING SOUND
     let soundUrl = "";

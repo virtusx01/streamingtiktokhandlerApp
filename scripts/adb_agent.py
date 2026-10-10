@@ -14,7 +14,7 @@ import uuid
 BASE_URL = os.environ.get("RENDER_APP_URL", "").rstrip("/")
 TOKEN = os.environ.get("ADB_AGENT_TOKEN", "")
 ADB_PATH = os.environ.get("ADB_PATH", "adb")
-POLL_INTERVAL = 1.5
+POLL_INTERVAL = 0.25
 HEARTBEAT_INTERVAL = 10
 AGENT_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
