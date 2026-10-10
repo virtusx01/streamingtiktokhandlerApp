@@ -41,9 +41,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'commandId dan success wajib diisi.' }, { status: 400 });
     }
 
+    if (
+      body.screenshot !== undefined &&
+      (typeof body.screenshot !== 'string' || body.screenshot.length > 16 * 1024 * 1024)
+    ) {
+      return NextResponse.json({ error: 'Screenshot tidak valid atau terlalu besar.' }, { status: 400 });
+    }
+
     const result = {
       output: typeof body.output === 'string' ? body.output.slice(0, 4000) : '',
       error: typeof body.error === 'string' ? body.error.slice(0, 2000) : '',
+      ...(typeof body.screenshot === 'string' ? { screenshot: body.screenshot } : {}),
     };
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.commandId)) {
       return NextResponse.json({ error: 'commandId tidak valid.' }, { status: 400 });

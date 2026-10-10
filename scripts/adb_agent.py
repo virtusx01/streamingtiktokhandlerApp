@@ -46,6 +46,7 @@ def adb_devices():
         text=True,
         timeout=10,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "adb devices gagal")
@@ -71,6 +72,22 @@ def adb_devices():
 
 def run_action(action):
     kind = action["type"]
+    if kind == "screencap":
+        result = subprocess.run(
+            [ADB_PATH, "exec-out", "screencap", "-p"],
+            capture_output=True,
+            timeout=20,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            error = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(error or "ADB gagal mengambil screenshot")
+        if not result.stdout.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError("ADB mengembalikan data screenshot yang bukan PNG")
+        if len(result.stdout) > 12 * 1024 * 1024:
+            raise RuntimeError("Ukuran screenshot melebihi batas 12 MB")
+        return base64.b64encode(result.stdout).decode("ascii")
     if kind == "click":
         args = ["shell", "input", "tap", str(action["x"]), str(action["y"])]
     elif kind == "keyevent":
@@ -98,6 +115,7 @@ def run_action(action):
         text=True,
         timeout=20,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "ADB command gagal")
@@ -110,10 +128,14 @@ def execute(command):
     if not isinstance(actions, list) or not actions or len(actions) > 20:
         raise ValueError("Daftar aksi dari server tidak valid")
 
+    screenshot = None
     for action in actions:
         if not isinstance(action, dict):
             raise ValueError("Format aksi dari server tidak valid")
-        run_action(action)
+        result = run_action(action)
+        if result is not None:
+            screenshot = result
+    return screenshot
 
 
 def main():
@@ -151,8 +173,9 @@ def main():
             command = data["command"]
             success = True
             error_text = ""
+            screenshot = None
             try:
-                execute(command)
+                screenshot = execute(command)
                 print(f"Aksi ADB selesai: {command.get('id')}")
             except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, RuntimeError) as error:
                 success = False
@@ -167,6 +190,7 @@ def main():
                     "success": success,
                     "output": "ADB actions executed" if success else "",
                     "error": error_text,
+                    "screenshot": screenshot,
                 },
             )
         except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as error:

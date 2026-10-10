@@ -228,6 +228,7 @@ class AdbAgentGui:
                 text=True,
                 timeout=10,
                 check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or "adb devices gagal.")

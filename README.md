@@ -64,7 +64,9 @@ running; it does not run the TikTok listener.
    `adb.exe`.
 6. Confirm the dashboard reports the ADB device as connected. Keep the agent
    process running while streaming. The agent polls the server for queued
-   actions and reports completion or errors.
+   actions and reports completion or errors. Device screenshots are also
+   captured by this local agent, not by running ADB on Render. ADB child
+   processes are launched without opening a console window.
 
 The laptop agent uses an outbound HTTPS connection and a bearer token; do not
 expose the ADB server or its USB connection to the public internet. The listener

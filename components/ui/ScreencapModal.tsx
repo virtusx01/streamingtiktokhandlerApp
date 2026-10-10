@@ -26,13 +26,18 @@ export default function ScreencapModal({ isOpen, onClose, onSelectCoordinate }: 
   const fetchScreencap = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/screencap?t=" + Date.now());
-      if (!res.ok) throw new Error("Failed to fetch screencap");
+      const res = await fetch("/api/screencap?t=" + Date.now(), {
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Gagal mengambil screenshot dari agent ADB.");
+      }
       const blob = await res.blob();
       setImageUrl(URL.createObjectURL(blob));
     } catch (err) {
       console.error(err);
-      alert("Failed to capture screen. Ensure ADB is connected and authorized.");
+      alert(err instanceof Error ? err.message : "Gagal mengambil screenshot dari agent ADB.");
       onClose();
     } finally {
       setLoading(false);
