@@ -52,6 +52,7 @@ def get_username_sync():
 
 TIKTOK_USERNAME = get_username_sync()
 BASE_URL = os.environ.get("NEXT_BASE_URL", "http://localhost:3005")
+LISTENER_TOKEN = os.environ.get("TIKTOK_LISTENER_TOKEN", "")
 
 # Endpoints
 GIFT_EVENT_URL = f"{BASE_URL}/api/gift-event"
@@ -73,7 +74,8 @@ def safe_get(obj, attr, fallback=None):
 
 async def safe_post(url, payload, event_type="Event"):
     try:
-        response = await http_client.post(url, json=payload, timeout=8.0)
+        headers = {"Authorization": f"Bearer {LISTENER_TOKEN}"} if LISTENER_TOKEN else {}
+        response = await http_client.post(url, json=payload, headers=headers, timeout=8.0)
         return response
     except httpx.ConnectError:
         # Backend not running or still starting

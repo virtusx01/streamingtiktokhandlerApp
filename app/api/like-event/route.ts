@@ -2,10 +2,19 @@ import { NextResponse } from 'next/server';
 import { emitLikeEvent } from '@/lib/events';
 import { getSetting, setSetting, getRewards, getUserLikes, updateUserLikes } from '@/lib/db';
 import { isDuplicate } from '@/lib/dedup';
+import { enqueueAdbActions, isAdminActionRequest } from '@/lib/adb-queue';
+import { isAuthorizedTikTokListener } from '@/lib/listener-auth';
 
 export async function POST(req: Request) {
   try {
     const likeData = await req.json();
+    const requestedActions = likeData.actions;
+    const isAdmin = await isAdminActionRequest(req);
+    if (requestedActions !== undefined && !isAdmin) {
+      return NextResponse.json({ error: 'Aksi uji hanya dapat dikirim oleh admin.' }, { status: 403 });
+    }
+    const allowAdbActions = isAdmin || isAuthorizedTikTokListener(req);
+    delete likeData.actions;
 
     // Server-side Deduplication
     if (isDuplicate(likeData.eventId, 5000)) {
@@ -51,23 +60,39 @@ export async function POST(req: Request) {
       }
     }
 
-    // Enrich with ADB actions if it's a milestone
+    let rewardActions: unknown[] | undefined;
+
+    // Enrich with configured actions for a milestone, or admin-supplied actions for a test.
     if (isMilestone) {
       const rewards = getRewards();
       const milestoneReward = rewards["Like Milestone"];
       if (milestoneReward) {
-        likeData.actions = milestoneReward.actions;
+        rewardActions = milestoneReward.actions;
       }
       likeData.isMilestone = true;
       likeData.milestoneCount = milestoneCount;
       console.log(`❤️ [${milestoneMode.toUpperCase()}] Like Milestone Reached: ${milestoneCount}! (User: ${nickname})`);
     }
 
+    const actions = requestedActions ?? rewardActions;
+    if (actions !== undefined) likeData.actions = actions;
+    const triggerRewardsEnabled = getSetting('triggerRewardsEnabled', true);
+
+    if (allowAdbActions && triggerRewardsEnabled && Array.isArray(actions) && actions.length > 0) {
+      const commandId = await enqueueAdbActions(actions, {
+        eventType: 'like',
+        username,
+        nickname,
+        milestoneCount: isMilestone ? milestoneCount : undefined,
+      });
+      console.log(`[ADB Queue] Like action queued: ${commandId}`);
+    }
+
     // Notify Widget via SSE
     emitLikeEvent({
       ...likeData,
       type: 'like',
-      triggerRewardsEnabled: getSetting('triggerRewardsEnabled', true)
+      triggerRewardsEnabled
     });
 
     return NextResponse.json({ success: true, isMilestone, milestoneMode });
@@ -76,4 +101,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
-

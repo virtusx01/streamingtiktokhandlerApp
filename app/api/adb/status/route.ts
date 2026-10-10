@@ -1,10 +1,34 @@
 import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { isAdbAgentConfigured } from '@/lib/adb-agent-auth';
+import { supabaseAdmin } from '@/lib/supabase';
 
 const execAsync = promisify(exec);
 
 export async function GET() {
+  if (isAdbAgentConfigured()) {
+    const { data, error } = await supabaseAdmin
+      .from('adb_agents')
+      .select('agent_id, last_seen, adb_connected, devices')
+      .order('last_seen', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[ADB Status] Failed to read agent status:', error.message);
+      return NextResponse.json({ connected: false, devices: [], agentOnline: false, error: error.message }, { status: 503 });
+    }
+
+    const isOnline = Boolean(data && Date.now() - new Date(data.last_seen).getTime() < 30000);
+    return NextResponse.json({
+      connected: isOnline && Boolean(data?.adb_connected),
+      devices: isOnline && Array.isArray(data?.devices) ? data.devices : [],
+      agentOnline: isOnline,
+      agentId: isOnline ? data?.agent_id : null,
+    });
+  }
+
   try {
     // Runs 'adb devices -l' to get detailed device info
     const { stdout } = await execAsync('adb devices -l');

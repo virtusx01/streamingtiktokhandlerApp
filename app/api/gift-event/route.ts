@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { emitGiftEvent } from '@/lib/events';
 import { getRewards, addDetectedGift, getSetting } from '@/lib/db';
 import { isDuplicate } from '@/lib/dedup';
+import { enqueueAdbActions, isAdminActionRequest } from '@/lib/adb-queue';
+import { isAuthorizedTikTokListener } from '@/lib/listener-auth';
 
 const GIFT_ALIASES: Record<string, string> = {
   "Rose": "Mawar",
@@ -59,6 +61,7 @@ interface AggregationRecord {
   giftData: GiftEventPayload;
   combos: Map<string, number>;
   firstTimestamp: number;
+  allowAdbActions: boolean;
 }
 
 // Persist aggregation registry across hot reloads in Next.js development mode
@@ -151,6 +154,7 @@ async function processAggregatedGift(aggKey: string) {
     // Ensure matchedReward.actions is always an array
     const verifiedActions = matchedReward?.actions ? (Array.isArray(matchedReward.actions) ? matchedReward.actions : [matchedReward.actions]) : null;
 
+    const triggerRewardsEnabled = getSetting('triggerRewardsEnabled', true);
     const enrichedData = {
       ...giftData,
       repeatCount: totalCount,
@@ -161,8 +165,22 @@ async function processAggregatedGift(aggKey: string) {
       displayGiftName: displayName,    
       nickname: giftData.nickname || giftData.username || "Viewer",
       actions: verifiedActions,
-      triggerRewardsEnabled: getSetting('triggerRewardsEnabled', true)
+      triggerRewardsEnabled
     };
+
+    if (agg.allowAdbActions && triggerRewardsEnabled && verifiedActions?.length) {
+      try {
+        const commandId = await enqueueAdbActions(verifiedActions, {
+          eventType: 'gift',
+          username: giftData.username,
+          giftName: finalGiftName,
+          repeatCount: totalCount,
+        });
+        console.log(`[ADB Queue] Gift action queued: ${commandId}`);
+      } catch (error) {
+        console.error('[ADB Queue] Gift action was not queued:', error);
+      }
+    }
 
     if (verifiedActions) {
         console.log(`🚀 Emitting Enriched Aggregated Gift Event: Matched Reward '${finalGiftName}' with ${verifiedActions.length} actions (TTS: ${displayName}, count: ${totalCount})`);
@@ -181,6 +199,12 @@ async function processAggregatedGift(aggKey: string) {
 export async function POST(req: Request) {
   try {
     const giftData: GiftEventPayload = await req.json();
+    const isAdmin = await isAdminActionRequest(req);
+
+    if (giftData.actions !== undefined && !isAdmin) {
+        return NextResponse.json({ error: 'Aksi uji hanya dapat dikirim oleh admin.' }, { status: 403 });
+    }
+    const allowAdbActions = isAdmin || isAuthorizedTikTokListener(req);
     
     // 1. Primary Deduplication (Event ID)
     if (isDuplicate(giftData.eventId, 10000)) {
@@ -208,6 +232,7 @@ export async function POST(req: Request) {
 
       // Update gift data with latest info
       existingAgg.giftData = giftData;
+      existingAgg.allowAdbActions ||= allowAdbActions;
 
       // Update the max repeat count for this msgId
       const currentMax = existingAgg.combos.get(msgId) || 0;
@@ -230,6 +255,7 @@ export async function POST(req: Request) {
         giftData,
         combos,
         firstTimestamp: Date.now(),
+        allowAdbActions,
         timeout: setTimeout(() => {
           processAggregatedGift(aggKey);
         }, 5000)

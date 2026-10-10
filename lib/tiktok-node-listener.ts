@@ -3,7 +3,6 @@ import { listenerStatus, updateListenerStatus } from './listener-state';
 import {
   emitStatusEvent,
   emitCommentEvent,
-  emitLikeEvent,
   emitJoinEvent,
   emitFollowEvent,
   emitShareEvent
@@ -325,9 +324,13 @@ class TikTokNodeListener {
         // Forward to internal gift event API for 5s debounce & reward matching
         const port = process.env.PORT || '3005';
         const baseUrl = process.env.NEXT_BASE_URL || `http://127.0.0.1:${port}`;
+        const listenerToken = process.env.TIKTOK_LISTENER_TOKEN;
         fetch(`${baseUrl}/api/gift-event`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(listenerToken ? { Authorization: `Bearer ${listenerToken}` } : {}),
+          },
           body: JSON.stringify(payload)
         }).catch((err) => {
           console.warn('[TikTokNodeListener] Failed to post gift to internal route:', err.message);
@@ -352,7 +355,19 @@ class TikTokNodeListener {
           eventId: `like_${uniqueId}_${Date.now()}`
         };
 
-        emitLikeEvent(payload);
+        const port = process.env.PORT || '3005';
+        const baseUrl = process.env.NEXT_BASE_URL || `http://127.0.0.1:${port}`;
+        const listenerToken = process.env.TIKTOK_LISTENER_TOKEN;
+        fetch(`${baseUrl}/api/like-event`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(listenerToken ? { Authorization: `Bearer ${listenerToken}` } : {}),
+          },
+          body: JSON.stringify(payload)
+        }).catch((err) => {
+          console.warn('[TikTokNodeListener] Failed to post like to internal route:', err.message);
+        });
       } catch (e) {}
     });
 
@@ -423,4 +438,3 @@ export const tiktokNodeListener: TikTokNodeListener =
   globalWithListener.__tiktok_node_listener || new TikTokNodeListener();
 
 globalWithListener.__tiktok_node_listener = tiktokNodeListener;
-
