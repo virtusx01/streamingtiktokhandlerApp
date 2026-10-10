@@ -139,6 +139,18 @@ def execute(command):
     return screenshot
 
 
+def command_result_payload(command_id, success, error_text="", screenshot=None):
+    payload = {
+        "commandId": command_id,
+        "success": success,
+        "output": "ADB actions executed" if success else "",
+        "error": error_text,
+    }
+    if screenshot is not None:
+        payload["screenshot"] = screenshot
+    return payload
+
+
 def main():
     if not BASE_URL.startswith(("https://", "http://")):
         raise SystemExit("Atur RENDER_APP_URL ke URL service Render.")
@@ -186,13 +198,12 @@ def main():
             request(
                 "/api/adb/agent/commands",
                 method="POST",
-                payload={
-                    "commandId": command.get("id"),
-                    "success": success,
-                    "output": "ADB actions executed" if success else "",
-                    "error": error_text,
-                    "screenshot": screenshot,
-                },
+                payload=command_result_payload(
+                    command.get("id"),
+                    success,
+                    error_text,
+                    screenshot,
+                ),
             )
         except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as error:
             print(f"Koneksi ke Render bermasalah: {error}")

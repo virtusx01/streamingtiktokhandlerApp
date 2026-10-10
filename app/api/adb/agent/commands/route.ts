@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     }
 
     if (
-      body.screenshot !== undefined &&
+      body.screenshot != null &&
       (typeof body.screenshot !== 'string' || body.screenshot.length > 16 * 1024 * 1024)
     ) {
       return NextResponse.json({ error: 'Screenshot tidak valid atau terlalu besar.' }, { status: 400 });

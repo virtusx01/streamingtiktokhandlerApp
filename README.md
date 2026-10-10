@@ -71,6 +71,15 @@ running; it does not run the TikTok listener.
    to the ADB queue and waits for the agent's execution result; it does not
    simulate a TikTok gift event.
 
+If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
+or key events, Android has denied input injection even though USB debugging is
+connected. On devices that provide it, enable **USB debugging (Security
+settings)** in Developer options, reconnect USB, and accept the debugging
+authorization prompt again. If the device firmware does not expose or honor
+that setting, standard `adb shell input` cannot inject touch events without
+device-level privileges; changing the configured coordinates will not fix
+this permission error.
+
 The laptop agent uses an outbound HTTPS connection and a bearer token; do not
 expose the ADB server or its USB connection to the public internet. The listener
 service on Render must also be configured to stay running during a live stream.
