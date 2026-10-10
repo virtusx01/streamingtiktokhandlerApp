@@ -39,20 +39,17 @@ interface Element {
 const AudioStatus: React.FC<{ locked: boolean; onClick: () => void }> = ({ locked, onClick }) => {
     if (!locked) return null;
     return (
-        <div 
-            onClick={onClick}
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm cursor-pointer group"
-        >
-            <div className="bg-neutral-900 border border-emerald-500/30 p-8 rounded-3xl shadow-2xl text-center transform transition group-hover:scale-105">
-                <div className="w-20 h-20 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-                    <Volume2 size={40} />
-                </div>
-                <h2 className="text-xl font-black text-white mb-2 uppercase tracking-tighter">Audio Terkunci</h2>
-                <p className="text-neutral-400 text-sm mb-6 max-w-[240px]">Browser memblokir suara otomatis. Klik di mana saja untuk mengaktifkan suara widget.</p>
-                <button className="px-8 py-3 bg-emerald-500 text-black font-black rounded-xl uppercase tracking-widest text-xs hover:bg-emerald-400 transition shadow-lg shadow-emerald-500/20">
-                    Aktifkan Suara Sekarang
-                </button>
-            </div>
+        <div className="fixed bottom-3 right-3 z-40 pointer-events-none">
+            <button
+                type="button"
+                onClick={onClick}
+                aria-label="Aktifkan audio widget"
+                title="Klik untuk mengaktifkan audio widget"
+                className="pointer-events-auto flex items-center gap-2 rounded-full border border-emerald-500/30 bg-neutral-950/70 px-3 py-2 text-emerald-300 opacity-20 shadow-lg transition hover:opacity-100 focus:opacity-100"
+            >
+                <Volume2 size={16} />
+                <span className="text-[10px] font-bold">Audio</span>
+            </button>
         </div>
     );
 };
@@ -69,6 +66,7 @@ interface NotificationItem {
     repeatCount?: number;
     repeatEnd?: boolean;
     msgId?: string;
+    giftIcon?: string;
     adbData?: any;
     priority: number; // 0=low (comment, join), 1=medium (like), 2=high (gift)
     prefetchedAudioUrl?: string;
@@ -608,7 +606,7 @@ export default function WidgetPage() {
     const item: NotificationItem = {
         id: Math.random().toString(36).substr(2, 9), type, giftName: data.giftName || "", namaHadiah: data.namaHadiah || data.giftName || "Hadiah",
         nickname: data.nickname || data.username || "Viewer", username: data.username || "Viewer", message: voiceMessage,
-        likeCount: data.likeCount, repeatCount: data.repeatCount || 1, repeatEnd: data.repeatEnd ?? true, msgId: data.msgId,
+        likeCount: data.likeCount, repeatCount: data.repeatCount || 1, repeatEnd: data.repeatEnd ?? true, msgId: data.msgId, giftIcon: data.giftIcon,
         adbData: (type === 'gift' || type === 'like') ? data.actions : null,
         priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || "",
         executionDurationMs,
@@ -994,6 +992,9 @@ export default function WidgetPage() {
   );
 
   const selectedElement = elements.find(el => el.id === selectedId);
+  const hasConfiguredEventElement = Boolean(activeNotification && elements.some(el =>
+    !el.eventTypes || el.eventTypes.includes(activeNotification.type)
+  ));
 
   return (
     <div className={`fixed inset-0 font-sans transition-colors duration-500 ${isGreenScreen ? "bg-[#00ff00]" : "bg-transparent"}`}>
@@ -1054,6 +1055,30 @@ export default function WidgetPage() {
 
       <AudioStatus locked={audioLocked} onClick={() => audioContextRef.current?.resume().then(() => setAudioLocked(false))} />
       <audio ref={silentAudioRef} src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" loop autoPlay style={{ display: 'none' }} />
+
+      {activeNotification && notifVisible && !hasConfiguredEventElement && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed left-1/2 top-8 z-30 flex min-w-[280px] max-w-[min(90vw,520px)] -translate-x-1/2 items-center gap-4 rounded-2xl border border-white/15 bg-neutral-950/90 px-5 py-4 text-white shadow-2xl backdrop-blur-md"
+        >
+          {activeNotification.type === "gift" && activeNotification.giftIcon ? (
+            <img src={activeNotification.giftIcon} alt="" className="h-14 w-14 rounded-xl object-contain" />
+          ) : (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-pink-500/15 text-pink-300">
+              <Gift size={28} />
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold">{activeNotification.nickname}</p>
+            <p className="truncate text-lg font-black">
+              {activeNotification.type === "gift"
+                ? `${activeNotification.namaHadiah || activeNotification.giftName}${(activeNotification.repeatCount || 1) > 1 ? ` x${activeNotification.repeatCount}` : ""}`
+                : activeNotification.message}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div ref={canvasRef} className="w-full h-full relative" onClick={() => showEditor && setSelectedId(null)}>
         {elements.map(el => {
