@@ -71,6 +71,13 @@ running; it does not run the TikTok listener.
    to the ADB queue and waits for the agent's execution result; it does not
    simulate a TikTok gift event.
 
+   The `/widget` browser source is public and does not need an admin login.
+   It displays the notifications and settings configured by the admin; editor
+   and configuration controls remain admin-only. Gift and like reward actions
+   are queued server-side when their events are processed and executed in order
+   by the local agent. The widget notification queue remains independent of
+   ADB completion. Apply pending database migrations before deploying changes.
+
 If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
 or key events, Android has denied input injection even though USB debugging is
 connected. On devices that provide it, enable **USB debugging (Security

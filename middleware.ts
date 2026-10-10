@@ -14,7 +14,7 @@ const PUBLIC_PREFIXES = [
   '/api/auth/logout',
   // Allow internal scripts/listeners/webhooks to communicate without browser cookies
   '/api',
-  // Public stream overlays (settings button hidden if not admin)
+  // Public stream overlays; admin-only controls are hidden by the page itself.
   '/widget',
   '/comment'
 ];

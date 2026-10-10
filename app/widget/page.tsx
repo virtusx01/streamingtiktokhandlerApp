@@ -600,7 +600,8 @@ export default function WidgetPage() {
         id: Math.random().toString(36).substr(2, 9), type, giftName: data.giftName || "", namaHadiah: data.namaHadiah || data.giftName || "Hadiah",
         nickname: data.nickname || data.username || "Viewer", username: data.username || "Viewer", message: voiceMessage,
         likeCount: data.likeCount, repeatCount: data.repeatCount || 1, repeatEnd: data.repeatEnd ?? true, msgId: data.msgId,
-        adbData: (type === 'gift' || type === 'like') ? data.actions : null, priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || ""
+        adbData: (type === 'gift' || type === 'like') ? data.actions : null,
+        priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || ""
     };
 
     const queue = notificationQueue.current;

@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents } from '@/lib/events';
+import { isAdminActionRequest } from '@/lib/adb-queue';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+  const isAdmin = await isAdminActionRequest(req);
   const encoder = new TextEncoder();
   const { signal } = req;
 
@@ -49,15 +51,29 @@ export async function GET(req: Request) {
         }
       };
 
+      const sendEvent = (type: string, data: unknown) => {
+        let eventData = data;
+        if (data && typeof data === 'object') {
+          const {
+            actions: _actions,
+            adbCommandId: _adbCommandId,
+            adbStartToken: _adbStartToken,
+            ...publicData
+          } = data as Record<string, unknown>;
+          eventData = publicData;
+        }
+        safeSend(`data: ${JSON.stringify({ type, data: eventData, isAdmin })}\n\n`);
+      };
+
       // Subscribe to all events
-      unsubscribers.push(subscribeToGiftEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'gift', data })}\n\n`)));
-      unsubscribers.push(subscribeToCommentEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'comment', data })}\n\n`)));
-      unsubscribers.push(subscribeToLikeEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'like', data })}\n\n`)));
-      unsubscribers.push(subscribeToJoinEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'join', data })}\n\n`)));
-      unsubscribers.push(subscribeToFollowEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'follow', data })}\n\n`)));
-      unsubscribers.push(subscribeToFanEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'fan', data })}\n\n`)));
-      unsubscribers.push(subscribeToShareEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'share', data })}\n\n`)));
-      unsubscribers.push(subscribeToStatusEvents((data) => safeSend(`data: ${JSON.stringify({ type: 'status', data })}\n\n`)));
+      unsubscribers.push(subscribeToGiftEvents((data) => sendEvent('gift', data)));
+      unsubscribers.push(subscribeToCommentEvents((data) => sendEvent('comment', data)));
+      unsubscribers.push(subscribeToLikeEvents((data) => sendEvent('like', data)));
+      unsubscribers.push(subscribeToJoinEvents((data) => sendEvent('join', data)));
+      unsubscribers.push(subscribeToFollowEvents((data) => sendEvent('follow', data)));
+      unsubscribers.push(subscribeToFanEvents((data) => sendEvent('fan', data)));
+      unsubscribers.push(subscribeToShareEvents((data) => sendEvent('share', data)));
+      unsubscribers.push(subscribeToStatusEvents((data) => sendEvent('status', data)));
 
       // Keep-alive heartbeat (10s for better browser persistence)
       keepAliveInterval = setInterval(() => {
