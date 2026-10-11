@@ -7,6 +7,14 @@ export const runtime = 'nodejs';
 
 type JsonObject = Record<string, unknown>;
 
+export async function GET() {
+  return NextResponse.json({
+    success: true,
+    endpoint: 'SociaBuzz webhook callback aktif.',
+    method: 'POST',
+  });
+}
+
 function objectOrEmpty(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
 }

@@ -118,6 +118,8 @@ fullscreen yang menghalangi overlay publik.
   dari ikon pengaturan di halaman. Custom alert menerima HTML/CSS tanpa
   JavaScript dan dirender pada iframe sandbox; placeholder yang didukung:
   `{{supporter}}`, `{{amount}}`, `{{message}}`, dan `{{mediaUrl}}`.
+  Callback juga merespons `GET /sociabuzz/callback` untuk HTTP test/health
+  check; metode GET hanya mengonfirmasi endpoint aktif dan tidak membuat alert.
 
 ## Peta folder dan entry point
 
