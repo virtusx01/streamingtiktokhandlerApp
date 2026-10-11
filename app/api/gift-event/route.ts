@@ -168,7 +168,6 @@ async function processAggregatedGift(aggKey: string) {
       triggerRewardsEnabled
     };
 
-    let notificationDeferredUntilAdbClaim = false;
     if (agg.allowAdbActions && triggerRewardsEnabled && verifiedActions?.length) {
       try {
         const commandId = await enqueueAdbActions(verifiedActions, {
@@ -176,11 +175,7 @@ async function processAggregatedGift(aggKey: string) {
           username: giftData.username,
           giftName: finalGiftName,
           repeatCount: totalCount,
-          widgetAckRequired: true,
-          widgetNotificationAck: false,
-          widgetEvent: { type: 'gift', data: enrichedData },
         });
-        notificationDeferredUntilAdbClaim = true;
         console.log(`[ADB Queue] Gift action queued: ${commandId}`);
       } catch (error) {
         console.error('[ADB Queue] Gift action was not queued:', error);
@@ -193,8 +188,7 @@ async function processAggregatedGift(aggKey: string) {
          console.log(`🚀 Emitting Enriched Aggregated Gift Event: No Actions for '${finalGiftName}' (TTS: ${displayName}, count: ${totalCount})`);
     }
     
-    // Start the notification when the local agent claims the matching ADB command.
-    if (!notificationDeferredUntilAdbClaim) emitGiftEvent(enrichedData);
+    emitGiftEvent(enrichedData);
 
   } catch (err: any) {
     console.error("Error in processAggregatedGift:", err);

@@ -934,6 +934,9 @@ export default function Home() {
                         {adbStatus?.devices?.[0]?.isWireless ? " (Wireless)" : ""}
                       </div>
                     </div>
+                    <div className="mt-1 text-[10px] text-neutral-600">
+                      ADB only runs device actions; widgets work without it.
+                    </div>
                   </div>
                   {adbStatus.connected && (
                     <button 
@@ -950,7 +953,7 @@ export default function Home() {
                 <div>
                   <div className="text-sm font-medium">TikTok Listener</div>
                   <div className="text-[10px] text-neutral-500 uppercase tracking-wider">
-                    {listenerConnected ? "Terhubung ke Live" : listenerRunning ? "Active (Standby)" : "Stopped"}
+                    {listenerConnected ? "Terhubung ke Live" : listenerRunning ? "Active (Waiting for LIVE)" : "Stopped"}
                   </div>
                 </div>
                 <button 

@@ -51,7 +51,7 @@ export async function GET() {
     const cloudConnected = getSetting('listener_connected', 'false') === 'true';
     const cloudIsLive = getSetting('listener_is_live', 'false') === 'true';
     const cloudUser = getSetting('listener_username', getSetting('tiktokUsername', '@onlyvirtus')).replace(/^@/, '');
-    const cloudStatusText = getSetting('listener_status_text', 'Active (Standby)');
+    const cloudStatusText = getSetting('listener_status_text', 'TikTok listener aktif; menunggu LIVE');
 
     const syncedState = {
       running: true,
@@ -135,7 +135,7 @@ export async function POST(req: Request) {
       setSetting('listener_connected', 'false');
       setSetting('listener_is_live', 'false');
       setSetting('listener_username', targetUsername);
-      setSetting('listener_status_text', `Menghubungkan ke @${targetUsername}...`);
+      setSetting('listener_status_text', `Menghubungkan ke TikTok @${targetUsername}...`);
       setSetting('listener_last_heartbeat', String(Date.now()));
 
       // Stop any legacy python process if running
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
       globalHolder.__last_listener_error = '';
       globalHolder.__last_listener_log = '';
 
-      // Check if Python runtime is available (Windows local environment has Python 3.13 with TikTokLive + ADB)
+      // Prefer the installed Python TikTok listener; ADB is only used separately for device actions.
       const pythonCmd = getPythonCommand();
       if (pythonCmd) {
         const scriptPath = path.join(process.cwd(), 'main.py');
@@ -181,7 +181,7 @@ export async function POST(req: Request) {
             connected: false,
             isLive: false,
             username: targetUsername,
-            statusText: `Menghubungkan ke @${targetUsername} (Python + ADB)...`
+            statusText: `Menghubungkan ke TikTok @${targetUsername} (Python)...`
           });
           emitStatusEvent(initialStatus);
 
@@ -209,7 +209,7 @@ export async function POST(req: Request) {
           });
 
           return NextResponse.json({
-            message: 'Listener Python + ADB started',
+            message: 'TikTok listener started',
             engine: 'python',
             username: targetUsername,
             status: initialStatus

@@ -126,6 +126,9 @@ fullscreen yang menghalangi overlay publik.
   `{{mediaMarkup}}` untuk menampilkan media default.
   Callback juga merespons `GET /sociabuzz/callback` untuk HTTP test/health
   check; metode GET hanya mengonfirmasi endpoint aktif dan tidak membuat alert.
+- Event gift, like, dan widget lainnya dikirim ke widget tanpa menunggu ADB.
+  ADB hanya dipakai untuk menjalankan aksi perangkat dari reward; listener
+  TikTok tetap dapat berjalan mandiri.
 
 ## Peta folder dan entry point
 
