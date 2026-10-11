@@ -1,11 +1,45 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { emitSociabuzzEvent } from '@/lib/events';
-import { getSetting } from '@/lib/db';
+import { getSetting, setSetting } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
 type JsonObject = Record<string, unknown>;
+type PayloadField = { path: string; value: string };
+
+const WEBHOOK_LOGS_KEY = 'sociabuzzWebhookLogs';
+const MAX_WEBHOOK_LOGS = 20;
+const MAX_PAYLOAD_FIELDS = 32;
+
+function summarizePayload(value: unknown): PayloadField[] {
+  const fields: PayloadField[] = [];
+
+  function visit(current: unknown, path: string, depth: number) {
+    if (fields.length >= MAX_PAYLOAD_FIELDS || depth > 4 || current === null) return;
+
+    if (Array.isArray(current)) {
+      current.slice(0, 8).forEach((item, index) => visit(item, `${path}[${index}]`, depth + 1));
+      return;
+    }
+
+    if (typeof current === 'object') {
+      for (const [key, item] of Object.entries(current as JsonObject)) {
+        if (/token|secret|authorization|password|cookie|email|phone|mobile/i.test(key)) continue;
+        visit(item, path ? `${path}.${key}` : key, depth + 1);
+        if (fields.length >= MAX_PAYLOAD_FIELDS) break;
+      }
+      return;
+    }
+
+    if (typeof current === 'string' || typeof current === 'number' || typeof current === 'boolean') {
+      fields.push({ path: path.slice(0, 120), value: String(current).slice(0, 160) });
+    }
+  }
+
+  visit(value, '', 0);
+  return fields;
+}
 
 export async function GET() {
   return NextResponse.json({
@@ -148,28 +182,55 @@ export async function POST(req: Request) {
     const amountData = objectOrEmpty(root.amount);
     const donationAmountData = objectOrEmpty(donation.amount);
     const objects = [root, data, donation, event, supporterData, amountData, donationAmountData];
-    const amount = valueAsString(
-      firstValue(objects, ['amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']),
-      '0',
-      80,
-    );
+
+    const realAmount = firstValue(objects, ['real_amount', 'amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']);
+    const realCurrency = firstValue(objects, ['real_currency', 'currency', 'currency_code', 'currencyCode']);
+    const qty = firstValue(objects, ['qty', 'quantity']);
+    const traktirItem = firstValue(objects, ['traktir_item', 'gift_name', 'item', 'item_name', 'giftName']);
+    const formattedAmount =
+      typeof traktirItem === 'string' && traktirItem.trim() && typeof qty !== 'undefined'
+        ? `${String(qty).trim()} ${traktirItem.trim()}`
+        :
+          typeof realCurrency === 'string' && realCurrency.trim() && typeof realAmount !== 'undefined'
+            ? `${realCurrency.trim()}${String(realAmount).trim()}`
+            : typeof realAmount !== 'undefined'
+              ? String(realAmount).trim()
+              : valueAsString(firstValue(objects, ['amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']), '0', 80);
+
     const supporter = valueAsString(
-      firstValue(objects, ['supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']),
+      firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']),
       'Supporter',
       120,
     );
     const message = valueAsString(
-      firstValue(objects, ['message', 'note', 'comment', 'supporter_message', 'supporterMessage']),
+      firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']),
       '',
       2000,
     );
     const mediaUrl = valueAsString(
-      firstValue(objects, ['mediaUrl', 'media_url', 'media']),
+      firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']),
       '',
       2000,
     );
+    const fromText = valueAsString(
+      firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']),
+      'mengirim',
+      80,
+    );
 
-    emitSociabuzzEvent({ amount, supporter, message, mediaUrl, timestamp: Date.now() });
+    const receivedAt = new Date().toISOString();
+    const logEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      receivedAt,
+      eventType: valueAsString(root.message, 'unknown', 80),
+      payloadFields: summarizePayload(parsedBody),
+      mapped: { amount: formattedAmount, supporter, message, mediaUrl, fromText },
+    };
+    const existingLogs: unknown = getSetting(WEBHOOK_LOGS_KEY, []);
+    const logs = Array.isArray(existingLogs) ? existingLogs : [];
+    setSetting(WEBHOOK_LOGS_KEY, [logEntry, ...logs].slice(0, MAX_WEBHOOK_LOGS));
+
+    emitSociabuzzEvent({ amount: formattedAmount, supporter, message, mediaUrl, fromText, timestamp: Date.now() });
     return NextResponse.json({ success: true }, { status: 202 });
   } catch (error) {
     console.error('[SociaBuzz] Invalid webhook payload:', error);
