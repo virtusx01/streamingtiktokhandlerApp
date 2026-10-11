@@ -6,6 +6,8 @@ import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, X } from 'lucide-
 type AlertConfig = {
   mode: 'default' | 'custom';
   html: string;
+  css: string;
+  javascript: string;
   durationMs: number;
   webhookTokenConfigured: boolean;
 };
@@ -16,6 +18,14 @@ type AlertData = {
   message: string;
   mediaUrl: string;
   fromText?: string;
+  raw?: {
+    amount: string | number | null;
+    supporter: string | number | null;
+    message: string | number | null;
+    mediaUrl: string | number | null;
+    fromText: string | number | null;
+    payload: unknown;
+  };
 };
 
 type WebhookLog = {
@@ -28,6 +38,22 @@ type WebhookLog = {
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="cyber-alert"><div class="custom-media" style="background-image:url(\'{{mediaUrl}}\');"></div><div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
+const DEFAULT_CSS = `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;900&family=Rajdhani:wght@600;700&display=swap');
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;font-family:'Rajdhani',sans-serif;color:#fff;background:#050b14}
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:linear-gradient(180deg,#050b14 0%,#0b1220 100%);overflow:hidden}
+.cyber-alert{display:flex;flex-direction:column;justify-content:center;align-items:center;max-width:480px;width:100%;margin:0 auto;font-family:'Rajdhani',sans-serif;animation:cyberPop .4s cubic-bezier(.18,.89,.32,1.28) forwards}
+.custom-media{width:220px;height:180px;margin:0 auto 12px auto;background-size:contain;background-repeat:no-repeat;background-position:center;display:block;animation:randomShuffleMedia 25s infinite steps(1);border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
+.cyber-card{position:relative;width:100%;background:transparent;padding:0 15px;color:#fff;text-align:center;box-sizing:border-box}
+.cyber-header{font-family:'Orbitron',sans-serif;font-size:1.1rem;margin-bottom:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;flex-wrap:wrap}
+.badge{background:#00ffcc;color:#0b0f19;padding:5px 12px;font-weight:900;border-radius:4px;display:inline-block;margin-right:4px;border:1.5px solid #000}
+.action{color:#fff;font-size:.95rem;font-weight:700;margin:0 4px;letter-spacing:1px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+.user{color:#ff007f;font-weight:900;display:inline-block;margin-left:4px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+.cyber-msg{font-size:1.25rem;font-weight:700;color:#fff;line-height:1.4;border:none;padding-top:4px;word-break:break-word;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+.bell-ring{animation:bellShake 2s ease-in-out infinite}
+@keyframes randomShuffleMedia{0%,33.32%{background-image:url('https://xkslvfdguwvrhxetbmyw.supabase.co/storage/v1/object/public/assets/c-d-kompilasi-final.webp')}}
+@keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
+@keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}`;
 const TEST_ALERT: AlertData = {
   amount: '25000',
   supporter: 'Supporter Test',
@@ -53,30 +79,26 @@ function renderHtml(template: string, alert: AlertData) {
   });
 }
 
-function createDocument(html: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;900&family=Rajdhani:wght@600;700&display=swap');
-    *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:'Rajdhani',sans-serif;color:#fff;background:#050b14}
-    body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:linear-gradient(180deg,#050b14 0%,#0b1220 100%);overflow:hidden}
-    .cyber-alert{display:flex;flex-direction:column;justify-content:center;align-items:center;max-width:480px;width:100%;margin:0 auto;font-family:'Rajdhani',sans-serif;animation:cyberPop .4s cubic-bezier(.18,.89,.32,1.28) forwards}
-    .custom-media{width:220px;height:180px;margin:0 auto 12px auto;background-size:contain;background-repeat:no-repeat;background-position:center;display:block;animation:randomShuffleMedia 25s infinite steps(1);border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
-    .cyber-card{position:relative;width:100%;background:transparent;padding:0 15px;color:#fff;text-align:center;box-sizing:border-box}
-    .cyber-header{font-family:'Orbitron',sans-serif;font-size:1.1rem;margin-bottom:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;flex-wrap:wrap}
-    .badge{background:#00ffcc;color:#0b0f19;padding:5px 12px;font-weight:900;border-radius:4px;display:inline-block;margin-right:4px;border:1.5px solid #000}
-    .action{color:#fff;font-size:.95rem;font-weight:700;margin:0 4px;letter-spacing:1px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
-    .user{color:#ff007f;font-weight:900;display:inline-block;margin-left:4px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
-    .cyber-msg{font-size:1.25rem;font-weight:700;color:#fff;line-height:1.4;border:none;padding-top:4px;word-break:break-word;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
-    .bell-ring{animation:bellShake 2s ease-in-out infinite}
-    @keyframes randomShuffleMedia{0%,33.32%{background-image:url('https://xkslvfdguwvrhxetbmyw.supabase.co/storage/v1/object/public/assets/c-d-kompilasi-final.webp') }}
-    @keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
-    @keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}
-  </style></head><body>${html}</body></html>`;
+function createDocument(html: string, css: string, javascript: string, rawData: AlertData['raw']) {
+  const safeCss = css.replace(/<\/style/gi, '<\\/style');
+  const safeJavascript = javascript.replace(/<\/script/gi, '<\\/script');
+  const safeRawData = JSON.stringify(rawData ?? null)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return `<!doctype html><html><head><meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'">
+    <style>${safeCss}</style></head><body>${html}
+    <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
+    <script>${safeJavascript}</script></body></html>`;
 }
 
 export default function SociabuzzPage() {
   const [config, setConfig] = useState<AlertConfig>({
     mode: 'default',
     html: DEFAULT_HTML,
+    css: DEFAULT_CSS,
+    javascript: '',
     durationMs: 8000,
     webhookTokenConfigured: false,
   });
@@ -126,6 +148,7 @@ export default function SociabuzzPage() {
           message: typeof data.message === 'string' ? data.message : '',
           mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : '',
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
+          raw: data.raw,
         });
         setVisible(true);
       } catch (parseError) {
@@ -145,8 +168,30 @@ export default function SociabuzzPage() {
   const previewHtml = useMemo(() => {
     if (!alert) return '';
     const template = config.mode === 'custom' ? config.html : DEFAULT_HTML;
-    return createDocument(renderHtml(template, alert));
-  }, [alert, config.html, config.mode]);
+    const css = config.mode === 'custom' ? config.css : DEFAULT_CSS;
+    const javascript = config.mode === 'custom' ? config.javascript : '';
+    const templateData = config.mode === 'custom' && alert.raw
+      ? {
+          ...alert,
+          amount: alert.raw.amount == null ? alert.amount : String(alert.raw.amount),
+          supporter: alert.raw.supporter == null ? alert.supporter : String(alert.raw.supporter),
+          message: alert.raw.message == null ? alert.message : String(alert.raw.message),
+          mediaUrl: alert.raw.mediaUrl == null ? alert.mediaUrl : String(alert.raw.mediaUrl),
+          fromText: alert.raw.fromText == null ? alert.fromText : String(alert.raw.fromText),
+        }
+      : alert;
+    return createDocument(renderHtml(template, templateData), css, javascript, alert.raw);
+  }, [alert, config.css, config.html, config.javascript, config.mode]);
+
+  const copyDefaultToCustom = () => {
+    setConfig((current) => ({
+      ...current,
+      mode: 'custom',
+      html: DEFAULT_HTML,
+      css: DEFAULT_CSS,
+      javascript: '',
+    }));
+  };
 
   const saveSettings = useCallback(async () => {
     setSaving(true);
@@ -203,7 +248,7 @@ export default function SociabuzzPage() {
       {alert && (
         <iframe
           title="SociaBuzz alert"
-          sandbox=""
+          sandbox="allow-scripts"
           srcDoc={previewHtml}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
@@ -238,7 +283,7 @@ export default function SociabuzzPage() {
             <header className="mb-5 flex items-center justify-between">
               <div>
                 <h1 className="text-lg font-bold">Pengaturan SociaBuzz Alert</h1>
-                <p className="mt-1 text-xs text-slate-400">Custom HTML hanya berjalan di iframe terisolasi; JavaScript tidak diizinkan.</p>
+                <p className="mt-1 text-xs text-slate-400">Kode custom berjalan di iframe sandbox terisolasi; JavaScript tidak dapat mengakses halaman utama.</p>
               </div>
               <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Tutup pengaturan" className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">
                 <X size={18} />
@@ -263,19 +308,63 @@ export default function SociabuzzPage() {
               </div>
 
               {config.mode === 'custom' && (
-                <div>
-                  <label htmlFor="sociabuzz-html" className="mb-2 flex items-center gap-2 text-sm font-semibold"><Code2 size={16} /> HTML alert</label>
-                  <textarea
-                    id="sociabuzz-html"
-                    value={config.html}
-                    onChange={(event) => setConfig((current) => ({ ...current, html: event.target.value }))}
-                    rows={10}
-                    spellCheck={false}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-emerald-100 outline-none focus:border-violet-400"
-                  />
-                  <p className="mt-2 text-xs leading-5 text-slate-400">
-                    Placeholder: <code>{'{{supporter}}'}</code>, <code>{'{{amount}}'}</code>, <code>{'{{message}}'}</code>, <code>{'{{mediaUrl}}'}</code>. Contoh media: <code>{'<video src="{{mediaUrl}}" autoplay controls></video>'}</code>.
-                  </p>
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="flex items-center gap-2 text-sm font-semibold"><Code2 size={16} /> Kode alert custom</h2>
+                      <p className="mt-1 text-xs text-slate-400">HTML, CSS, dan JavaScript ditampilkan dan dapat diedit di sini.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyDefaultToCustom}
+                      className="flex items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/20"
+                    >
+                      <Copy size={14} /> Salin template &amp; style default
+                    </button>
+                  </div>
+
+                  <div>
+                    <label htmlFor="sociabuzz-html" className="mb-2 block text-xs font-semibold text-emerald-200">HTML</label>
+                    <textarea
+                      id="sociabuzz-html"
+                      value={config.html}
+                      onChange={(event) => setConfig((current) => ({ ...current, html: event.target.value }))}
+                      rows={8}
+                      spellCheck={false}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-emerald-100 outline-none focus:border-violet-400"
+                    />
+                    <p className="mt-2 text-xs leading-5 text-slate-400">
+                        Placeholder di mode custom memakai nilai mentah: <code>{'{{supporter}}'}</code>, <code>{'{{amount}}'}</code>, <code>{'{{message}}'}</code>, <code>{'{{mediaUrl}}'}</code>, <code>{'{{fromText}}'}</code>. Misalnya amount berupa <code>1000</code>, tanpa format mata uang default.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label htmlFor="sociabuzz-css" className="mb-2 block text-xs font-semibold text-cyan-200">CSS</label>
+                    <textarea
+                      id="sociabuzz-css"
+                      value={config.css}
+                      onChange={(event) => setConfig((current) => ({ ...current, css: event.target.value }))}
+                      rows={12}
+                      spellCheck={false}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-cyan-100 outline-none focus:border-violet-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="sociabuzz-javascript" className="mb-2 block text-xs font-semibold text-amber-200">JavaScript</label>
+                    <textarea
+                      id="sociabuzz-javascript"
+                      value={config.javascript}
+                      onChange={(event) => setConfig((current) => ({ ...current, javascript: event.target.value }))}
+                      rows={8}
+                      spellCheck={false}
+                      placeholder={'// Data mentah tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// Nilai asli SociaBuzz, misalnya:\n// payload.real_amount, payload.fullname, payload.note\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(payload.real_amount ?? amount ?? "");'}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
+                    />
+                    <p className="mt-2 text-xs leading-5 text-amber-200/80">
+                      Data tersedia di <code>window.sociabuzz</code> dan <code>window.sociabuzzData</code>: <code>amount</code>, <code>supporter</code>, <code>message</code>, dan <code>payload</code> mentah yang sudah menghapus field token/kontak. JS terisolasi dan tidak dapat mengakses halaman utama; koneksi script seperti fetch/XHR diblokir. Gambar/media eksternal tetap diizinkan. Jalankan hanya kode yang kamu percaya.
+                    </p>
+                  </div>
                 </div>
               )}
 

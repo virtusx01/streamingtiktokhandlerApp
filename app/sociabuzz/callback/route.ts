@@ -11,6 +11,40 @@ type PayloadField = { path: string; value: string };
 const WEBHOOK_LOGS_KEY = 'sociabuzzWebhookLogs';
 const MAX_WEBHOOK_LOGS = 20;
 const MAX_PAYLOAD_FIELDS = 32;
+const SENSITIVE_PAYLOAD_KEY = /token|secret|authorization|password|cookie|email|phone|mobile/i;
+const CUSTOM_PAYLOAD_KEYS = new Set([
+  'real_amount', 'real_currency', 'fullname', 'note', 'gif_link', 'from_label',
+  'qty', 'traktir_item', 'message', 'uuid', 'recipient_id', 'user_id',
+  'amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value',
+  'currency', 'currency_code', 'currencyCode', 'full_name', 'fullName',
+  'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name',
+  'username', 'nickname', 'display_name', 'comment', 'supporter_message',
+  'supporterMessage', 'gifLink', 'mediaUrl', 'media_url', 'media',
+  'image_url', 'imageUrl', 'fromText', 'from_text', 'from_label_text',
+  'quantity', 'gift_name', 'item', 'item_name', 'giftName',
+]);
+
+function selectCustomPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.slice(0, 32).map(selectCustomPayload);
+  }
+
+  if (value && typeof value === 'object') {
+    const selected = Object.entries(value as JsonObject)
+      .filter(([key]) => !SENSITIVE_PAYLOAD_KEY.test(key))
+      .flatMap(([key, item]) => {
+        if (CUSTOM_PAYLOAD_KEYS.has(key)) {
+          return [[key, item && typeof item === 'object' ? selectCustomPayload(item) : item]];
+        }
+        if (!item || typeof item !== 'object') return [];
+        const nested = selectCustomPayload(item);
+        return Object.keys(nested as JsonObject).length > 0 ? [[key, nested]] : [];
+      });
+    return Object.fromEntries(selected);
+  }
+
+  return value;
+}
 
 function summarizePayload(value: unknown): PayloadField[] {
   const fields: PayloadField[] = [];
@@ -25,7 +59,7 @@ function summarizePayload(value: unknown): PayloadField[] {
 
     if (typeof current === 'object') {
       for (const [key, item] of Object.entries(current as JsonObject)) {
-        if (/token|secret|authorization|password|cookie|email|phone|mobile/i.test(key)) continue;
+        if (SENSITIVE_PAYLOAD_KEY.test(key)) continue;
         visit(item, path ? `${path}.${key}` : key, depth + 1);
         if (fields.length >= MAX_PAYLOAD_FIELDS) break;
       }
@@ -230,7 +264,24 @@ export async function POST(req: Request) {
     const logs = Array.isArray(existingLogs) ? existingLogs : [];
     setSetting(WEBHOOK_LOGS_KEY, [logEntry, ...logs].slice(0, MAX_WEBHOOK_LOGS));
 
-    emitSociabuzzEvent({ amount: formattedAmount, supporter, message, mediaUrl, fromText, timestamp: Date.now() });
+    const rawAlert = {
+      amount: realAmount ?? null,
+      supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']) ?? null,
+      message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
+      mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
+      fromText: firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']) ?? null,
+      payload: selectCustomPayload(parsedBody),
+    };
+
+    emitSociabuzzEvent({
+      amount: formattedAmount,
+      supporter,
+      message,
+      mediaUrl,
+      fromText,
+      raw: rawAlert,
+      timestamp: Date.now(),
+    });
     return NextResponse.json({ success: true }, { status: 202 });
   } catch (error) {
     console.error('[SociaBuzz] Invalid webhook payload:', error);

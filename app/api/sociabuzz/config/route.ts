@@ -5,7 +5,7 @@ import { getSetting, setSetting } from '@/lib/db';
 const CONFIG_KEY = 'sociabuzzAlertConfig';
 const TOKEN_KEY = 'sociabuzzWebhookToken';
 const TOKEN_HASH_KEY = 'sociabuzzWebhookTokenHash';
-const DEFAULT_HTML = '<div class="alert"><strong>{{supporter}}</strong><span>mengirim dukungan</span><b>Rp {{amount}}</b><p>{{message}}</p></div>';
+const DEFAULT_HTML = '<div class="cyber-alert"><div class="custom-media" style="background-image:url(\'{{mediaUrl}}\');"></div><div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
 
 function isValidAlertHtml(html: unknown): html is string {
   return typeof html === 'string' &&
@@ -16,12 +16,24 @@ function isValidAlertHtml(html: unknown): html is string {
     !/\bsrcdoc\s*=/i.test(html);
 }
 
+function isValidAlertCss(css: unknown): css is string {
+  return typeof css === 'string' &&
+    css.length <= 30000 &&
+    !/<\s*\/?\s*(script|iframe|object|embed|form|base|meta)\b/i.test(css);
+}
+
+function isValidAlertJavascript(javascript: unknown): javascript is string {
+  return typeof javascript === 'string' && javascript.length <= 15000;
+}
+
 export async function GET() {
   const config = getSetting(CONFIG_KEY, {});
   const safeConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
   return NextResponse.json({
     mode: safeConfig.mode === 'custom' ? 'custom' : 'default',
     html: isValidAlertHtml(safeConfig.html) ? safeConfig.html : DEFAULT_HTML,
+    css: isValidAlertCss(safeConfig.css) ? safeConfig.css : '',
+    javascript: isValidAlertJavascript(safeConfig.javascript) ? safeConfig.javascript : '',
     durationMs: Number.isInteger(safeConfig.durationMs) && safeConfig.durationMs >= 1000 && safeConfig.durationMs <= 60000
       ? safeConfig.durationMs
       : 8000,
@@ -44,12 +56,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Konfigurasi tidak valid.' }, { status: 400 });
     }
 
-    const { mode, html, durationMs, webhookToken } = body;
+    const { mode, html, css = '', javascript = '', durationMs, webhookToken } = body;
     if (mode !== 'default' && mode !== 'custom') {
       return NextResponse.json({ error: 'Mode alert tidak valid.' }, { status: 400 });
     }
     if (!isValidAlertHtml(html)) {
       return NextResponse.json({ error: 'HTML maksimal 30.000 karakter dan tidak boleh memuat script, event handler, atau iframe.' }, { status: 400 });
+    }
+    if (!isValidAlertCss(css)) {
+      return NextResponse.json({ error: 'CSS harus berupa teks maksimal 30.000 karakter dan tidak boleh memuat tag HTML aktif.' }, { status: 400 });
+    }
+    if (!isValidAlertJavascript(javascript)) {
+      return NextResponse.json({ error: 'JavaScript harus berupa teks maksimal 15.000 karakter.' }, { status: 400 });
     }
     if (!Number.isInteger(durationMs) || durationMs < 1000 || durationMs > 60000) {
       return NextResponse.json({ error: 'Durasi alert harus antara 1 sampai 60 detik.' }, { status: 400 });
@@ -59,7 +77,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Webhook token harus berisi 16 sampai 256 karakter.' }, { status: 400 });
     }
 
-    setSetting(CONFIG_KEY, { mode, html, durationMs });
+    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs });
     if (typeof webhookToken === 'string' && webhookToken.length > 0) {
       setSetting(TOKEN_KEY, webhookToken);
       setSetting(TOKEN_HASH_KEY, '');
