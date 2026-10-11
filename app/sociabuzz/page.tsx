@@ -17,7 +17,7 @@ type AlertData = {
   mediaUrl: string;
 };
 
-const CALLBACK_URL = 'https://tiktoklistener.com/sociabuzz/callback';
+const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="alert"><strong>{{supporter}}</strong><span>mengirim dukungan</span><b>Rp {{amount}}</b><p>{{message}}</p></div>';
 const TEST_ALERT: AlertData = {
   amount: '25000',
