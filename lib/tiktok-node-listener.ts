@@ -60,6 +60,29 @@ class TikTokNodeListener {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private seenEvents = new BoundedSet(200);
 
+  private getSessionOptions() {
+    const sessionId = (process.env.TIKTOK_SESSION_ID || '').trim();
+    const ttTargetIdc = (process.env.TIKTOK_TT_TARGET_IDC || '').trim();
+    const hasSession = Boolean(sessionId && ttTargetIdc);
+
+    if (!hasSession) {
+      return {
+        authenticateWs: false,
+        sessionId: undefined,
+        ttTargetIdc: undefined
+      };
+    }
+
+    return {
+      authenticateWs: true,
+      sessionId,
+      ttTargetIdc,
+      webClientHeaders: {
+        Cookie: `sessionid=${sessionId}; tt-target-idc=${ttTargetIdc};`
+      }
+    };
+  }
+
   public isActive(): boolean {
     return this.active;
   }
@@ -145,10 +168,12 @@ class TikTokNodeListener {
         statusText: `Memeriksa live @${username}...`
       });
 
+      const sessionOptions = this.getSessionOptions();
       const conn = new WebcastPushConnection(username, {
         processInitialData: false,
         enableExtendedGiftInfo: true,
-        requestPollingIntervalMs: 1000
+        requestPollingIntervalMs: 1000,
+        ...sessionOptions
       });
       this.connection = conn;
 
