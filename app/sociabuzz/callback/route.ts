@@ -35,15 +35,49 @@ function valueAsString(value: unknown, fallback: string, maxLength: number): str
   return normalized ? normalized.slice(0, maxLength) : fallback;
 }
 
-function getPresentedToken(req: Request): string {
+function getPresentedTokenCandidates(req: Request, bodyObject?: unknown): string[] {
+  const candidates: string[] = [];
+
+  const collect = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) {
+      const trimmed = value.trim();
+      if (!candidates.includes(trimmed)) candidates.push(trimmed);
+    }
+  };
+
   const authorization = req.headers.get('authorization') || '';
-  if (/^Bearer\s+/i.test(authorization)) return authorization.replace(/^Bearer\s+/i, '').trim();
-  return req.headers.get('x-webhook-token') ||
-    req.headers.get('x-webhook-secret') ||
-    req.headers.get('x-sociabuzz-token') ||
-    req.headers.get('x-hook-token') ||
-    req.headers.get('x-api-key') ||
-    '';
+  if (authorization) {
+    if (/^(Bearer|Token)\s+/i.test(authorization)) {
+      collect(authorization.replace(/^(Bearer|Token)\s+/i, ''));
+    }
+    collect(authorization);
+  }
+
+  const headerNames = [
+    'x-webhook-token', 'x-webhook-secret', 'x-sociabuzz-token', 'x-hook-token', 'x-api-key', 'x-token', 'x-signature'
+  ];
+  for (const name of headerNames) {
+    collect(req.headers.get(name));
+  }
+
+  const query = new URL(req.url).searchParams;
+  collect(query.get('token'));
+  collect(query.get('webhook_token'));
+  collect(query.get('webhookToken'));
+  collect(query.get('api_key'));
+  collect(query.get('apikey'));
+
+  if (bodyObject && typeof bodyObject === 'object' && !Array.isArray(bodyObject)) {
+    const body = bodyObject as Record<string, unknown>;
+    collect(body.token);
+    collect(body.webhookToken);
+    collect(body.webhook_token);
+    collect(body.api_key);
+    collect(body.apiKey);
+    collect(body.authorization);
+  }
+
+  return candidates;
 }
 
 function tokenMatches(presentedToken: string, expectedHash: unknown): boolean {
@@ -58,9 +92,6 @@ export async function POST(req: Request) {
   if (!expectedHash) {
     return NextResponse.json({ error: 'Webhook SociaBuzz belum dikonfigurasi oleh admin.' }, { status: 503 });
   }
-  if (!tokenMatches(getPresentedToken(req), expectedHash)) {
-    return NextResponse.json({ error: 'Webhook token tidak valid.' }, { status: 401 });
-  }
 
   try {
     const rawBody = await req.text();
@@ -68,7 +99,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Payload webhook melebihi batas 32 KB.' }, { status: 413 });
     }
 
-    const parsedBody: unknown = JSON.parse(rawBody);
+    let parsedBody: unknown = {};
+    if (rawBody.trim()) {
+      try {
+        parsedBody = JSON.parse(rawBody);
+      } catch {
+        parsedBody = {};
+      }
+    }
+
+    const tokenCandidates = getPresentedTokenCandidates(req, parsedBody);
+    const isValid = tokenCandidates.some(candidate => tokenMatches(candidate, expectedHash));
+    if (!isValid) {
+      return NextResponse.json({ error: 'Webhook token tidak valid.' }, { status: 401 });
+    }
+
     if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
       return NextResponse.json({ error: 'Payload webhook harus berupa object JSON.' }, { status: 400 });
     }
