@@ -17,8 +17,17 @@ export function getPythonCommand(): string | null {
     return cachedPythonPath;
   }
 
-  // 2. Candidate binaries to try
-  const candidates = process.platform === 'win32' 
+  // Prefer project dependencies when the app has a local virtual environment.
+  const projectPython = process.platform === 'win32'
+    ? path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')
+    : path.join(process.cwd(), '.venv', 'bin', 'python');
+  if (fs.existsSync(projectPython)) {
+    cachedPythonPath = projectPython;
+    return cachedPythonPath;
+  }
+
+  // 3. Candidate binaries to try
+  const candidates = process.platform === 'win32'
     ? ['python', 'py', 'python3', 'C:\\Python313\\python.exe', 'C:\\Python312\\python.exe', 'C:\\Python311\\python.exe']
     : ['python3', 'python'];
 

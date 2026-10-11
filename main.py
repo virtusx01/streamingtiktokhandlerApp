@@ -342,8 +342,10 @@ async def listen_loop():
                 connected=False,
                 status_text=f"Menghubungkan ke @{TIKTOK_USERNAME}..."
             )
-            # await client.start() initiates websocket connection to live room
-            await client.start()
+            # TikTokLive 7.x starts the websocket in a background task.
+            # Keep this loop alive until that connection ends or fails.
+            connection_task = await client.start()
+            await connection_task
         except UserOfflineError as e:
             print(f"⏳ @{TIKTOK_USERNAME} sedang Offline. Standby mengecek ulang dalam 10 detik...", flush=True)
             await report_listener_status(
