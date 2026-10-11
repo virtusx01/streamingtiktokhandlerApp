@@ -36,6 +36,12 @@ if (status.stdout) process.stdout.write(status.stdout);
 if (status.stderr) process.stderr.write(status.stderr);
 
 if (status.status === 0) {
+  const statusOutput = `${status.stdout || ''}\n${status.stderr || ''}`;
+  if (statusOutput.includes('Database schema is up to date!')) {
+    console.log('No pending Prisma migrations; skipping deploy.');
+    process.exit(0);
+  }
+
   const deploy = runPrisma(['migrate', 'deploy', '--schema', schemaFile], { stdio: 'inherit' });
   if (deploy.error) throw deploy.error;
   process.exit(deploy.status ?? 1);
