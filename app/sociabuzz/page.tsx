@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, X } from 'lucide-react';
+import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Volume2, X } from 'lucide-react';
 
 type AlertConfig = {
   mode: 'default' | 'custom';
@@ -39,13 +39,14 @@ type WebhookLog = {
 };
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
-const DEFAULT_HTML = '<div class="cyber-alert"><div class="custom-media" style="background-image:url(\'{{mediaUrl}}\');"></div><div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
+const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
 const DEFAULT_CSS = `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;900&family=Rajdhani:wght@600;700&display=swap');
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;font-family:'Rajdhani',sans-serif;color:#fff;background:transparent}
 body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:transparent;overflow:hidden}
 .cyber-alert{display:flex;flex-direction:column;justify-content:center;align-items:center;max-width:480px;width:100%;margin:0 auto;font-family:'Rajdhani',sans-serif;animation:cyberPop .4s cubic-bezier(.18,.89,.32,1.28) forwards}
 .custom-media{width:220px;height:180px;margin:0 auto 12px auto;background-size:contain;background-repeat:no-repeat;background-position:center;display:block;animation:randomShuffleMedia 25s infinite steps(1);border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
+.custom-video{width:220px;height:180px;margin:0 auto 12px auto;object-fit:contain;display:block;border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
 .cyber-card{position:relative;width:100%;background:transparent;padding:0 15px;color:#fff;text-align:center;box-sizing:border-box}
 .cyber-header{font-family:'Orbitron',sans-serif;font-size:1.1rem;margin-bottom:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;flex-wrap:wrap}
 .badge{background:#00ffcc;color:#0b0f19;padding:5px 12px;font-weight:900;border-radius:4px;display:inline-block;margin-right:4px;border:1.5px solid #000}
@@ -67,7 +68,13 @@ function escapeHtml(value: string) {
 }
 
 function renderHtml(template: string, alert: AlertData) {
-  return template.replace(/\{\{\s*(supporter|amount|message|mediaUrl|fromText|from_text)\s*\}\}/g, (_match, key: string) => {
+  const safeMediaUrl = escapeHtml(alert.mediaUrl);
+  const isVideo = /^https:\/\//i.test(alert.mediaUrl) && /\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(alert.mediaUrl);
+  const mediaMarkup = isVideo
+    ? `<video class="custom-video" src="${safeMediaUrl}" autoplay muted playsinline loop></video>`
+    : `<div class="custom-media" style="background-image:url('${safeMediaUrl}');"></div>`;
+  return template.replace(/\{\{\s*(supporter|amount|message|mediaUrl|mediaMarkup|fromText|from_text)\s*\}\}/g, (_match, key: string) => {
+    if (key === 'mediaMarkup') return mediaMarkup;
     const safeKey = key === 'from_text' ? 'fromText' : key;
     const value = alert[safeKey as keyof AlertData] ?? (safeKey === 'fromText' ? 'mengirim' : '');
     return escapeHtml(String(value));
@@ -110,8 +117,10 @@ export default function SociabuzzPage() {
   const [testError, setTestError] = useState('');
   const [testingAlert, setTestingAlert] = useState(false);
   const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
+  const [soundPlaying, setSoundPlaying] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const soundIndicatorTimeoutRef = useRef<number | null>(null);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
@@ -158,6 +167,9 @@ export default function SociabuzzPage() {
       oscillator.start(noteStart);
       oscillator.stop(noteStart + 0.4);
     });
+    setSoundPlaying(true);
+    if (soundIndicatorTimeoutRef.current !== null) window.clearTimeout(soundIndicatorTimeoutRef.current);
+    soundIndicatorTimeoutRef.current = window.setTimeout(() => setSoundPlaying(false), 800);
     setAudioNeedsUnlock(false);
   }, [getAudioContext]);
 
@@ -165,9 +177,13 @@ export default function SociabuzzPage() {
     if (soundUrl) {
       const audio = new Audio(soundUrl);
       audio.volume = 1;
+      audio.preload = 'auto';
+      audio.onended = () => setSoundPlaying(false);
+      audio.onpause = () => setSoundPlaying(false);
       audioRef.current = audio;
       try {
         await audio.play();
+        setSoundPlaying(true);
         setAudioNeedsUnlock(false);
         return;
       } catch (audioError) {
@@ -216,7 +232,13 @@ export default function SociabuzzPage() {
           raw: data.raw,
         });
         setVisible(true);
-        void playAlertSound(typeof data.soundUrl === 'string' ? data.soundUrl : undefined);
+        const mediaAudioUrl = typeof data.mediaUrl === 'string' &&
+          /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(data.mediaUrl)
+          ? data.mediaUrl
+          : undefined;
+        void playAlertSound(
+          typeof data.soundUrl === 'string' ? data.soundUrl : mediaAudioUrl,
+        );
       } catch (parseError) {
         console.error('[SociaBuzz] Could not parse incoming event:', parseError);
       }
@@ -227,6 +249,7 @@ export default function SociabuzzPage() {
 
   useEffect(() => () => {
     audioRef.current?.pause();
+    if (soundIndicatorTimeoutRef.current !== null) window.clearTimeout(soundIndicatorTimeoutRef.current);
     void audioContextRef.current?.close().catch((audioError: unknown) => {
       console.error('[SociaBuzz] Audio context could not be closed:', audioError);
     });
@@ -340,9 +363,20 @@ export default function SociabuzzPage() {
         <iframe
           title="SociaBuzz alert"
           sandbox="allow-scripts"
+          allow="autoplay"
           srcDoc={previewHtml}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
+      )}
+      {visible && soundPlaying && (
+        <div
+          role="status"
+          aria-label="Suara alert sedang diputar"
+          className="pointer-events-none fixed right-5 top-5 flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-slate-950/85 px-3 py-2 text-emerald-200 shadow-lg backdrop-blur"
+        >
+          <Volume2 size={16} />
+          <span className="text-[10px] font-bold uppercase tracking-wider">Audio</span>
+        </div>
       )}
 
       {isAdmin && (

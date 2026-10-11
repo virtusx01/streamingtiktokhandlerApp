@@ -23,7 +23,9 @@ const CUSTOM_PAYLOAD_KEYS = new Set([
   'image_url', 'imageUrl', 'fromText', 'from_text', 'from_label_text',
   'quantity', 'gift_name', 'item', 'item_name', 'giftName', 'sound_url',
   'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
-  'notification_sound', 'notificationSound', 'sound', 'audio',
+  'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
+  'soundFile', 'audio_file', 'audioFile', 'alert_audio', 'alertAudio',
+  'alert_sound_url', 'alertSoundUrl', 'notification_audio', 'notificationAudio',
 ]);
 
 function selectCustomPayload(value: unknown): unknown {
@@ -100,17 +102,44 @@ function firstValue(objects: JsonObject[], keys: string[]): unknown {
 }
 
 function firstHttpsUrl(objects: JsonObject[], keys: string[]): string {
-  for (const object of objects) {
-    for (const key of keys) {
-      const value = object[key];
-      if (typeof value !== 'string' || value.length > 2000) continue;
-      try {
-        const url = new URL(value);
-        if (url.protocol === 'https:') return url.toString();
-      } catch {
-        continue;
+  const normalizedKeys = new Set(keys.map((key) => key.toLowerCase()));
+  const findUrl = (value: unknown, depth: number): string => {
+    if (depth > 5 || !value || typeof value !== 'object' || Array.isArray(value)) return '';
+
+    for (const [key, item] of Object.entries(value as JsonObject)) {
+      if (normalizedKeys.has(key.toLowerCase())) {
+        if (typeof item === 'string') {
+          try {
+            const url = new URL(item);
+            if (url.protocol === 'https:') return url.toString();
+          } catch {
+            // Ignore non-URL values and inspect nested source fields below.
+          }
+        }
+        if (item && typeof item === 'object') {
+          const nestedUrl = findUrl(item, depth + 1);
+          if (nestedUrl) return nestedUrl;
+          for (const [nestedKey, nestedValue] of Object.entries(item as JsonObject)) {
+            if (!['url', 'src', 'link', 'file'].includes(nestedKey.toLowerCase()) || typeof nestedValue !== 'string') continue;
+            try {
+              const url = new URL(nestedValue);
+              if (url.protocol === 'https:') return url.toString();
+            } catch {
+              continue;
+            }
+          }
+        }
       }
+
+      const nestedUrl = findUrl(item, depth + 1);
+      if (nestedUrl) return nestedUrl;
     }
+    return '';
+  };
+
+  for (const object of objects) {
+    const url = findUrl(object, 0);
+    if (url) return url;
   }
   return '';
 }
@@ -266,7 +295,9 @@ export async function POST(req: Request) {
     );
     const soundUrl = firstHttpsUrl(objects, [
       'sound_url', 'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
-      'notification_sound', 'notificationSound', 'sound', 'audio',
+      'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
+      'soundFile', 'audio_file', 'audioFile', 'alert_audio', 'alertAudio',
+      'alert_sound_url', 'alertSoundUrl', 'notification_audio', 'notificationAudio',
     ]);
     const fromText = valueAsString(
       firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']),
