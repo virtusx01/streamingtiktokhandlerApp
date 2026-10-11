@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Volume2, X } from 'lucide-react';
+import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, X } from 'lucide-react';
 
 type AlertConfig = {
   mode: 'default' | 'custom';
@@ -117,10 +117,8 @@ export default function SociabuzzPage() {
   const [testError, setTestError] = useState('');
   const [testingAlert, setTestingAlert] = useState(false);
   const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
-  const [soundPlaying, setSoundPlaying] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const soundIndicatorTimeoutRef = useRef<number | null>(null);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
@@ -167,9 +165,6 @@ export default function SociabuzzPage() {
       oscillator.start(noteStart);
       oscillator.stop(noteStart + 0.4);
     });
-    setSoundPlaying(true);
-    if (soundIndicatorTimeoutRef.current !== null) window.clearTimeout(soundIndicatorTimeoutRef.current);
-    soundIndicatorTimeoutRef.current = window.setTimeout(() => setSoundPlaying(false), 800);
     setAudioNeedsUnlock(false);
   }, [getAudioContext]);
 
@@ -178,12 +173,9 @@ export default function SociabuzzPage() {
       const audio = new Audio(soundUrl);
       audio.volume = 1;
       audio.preload = 'auto';
-      audio.onended = () => setSoundPlaying(false);
-      audio.onpause = () => setSoundPlaying(false);
       audioRef.current = audio;
       try {
         await audio.play();
-        setSoundPlaying(true);
         setAudioNeedsUnlock(false);
         return;
       } catch (audioError) {
@@ -249,7 +241,6 @@ export default function SociabuzzPage() {
 
   useEffect(() => () => {
     audioRef.current?.pause();
-    if (soundIndicatorTimeoutRef.current !== null) window.clearTimeout(soundIndicatorTimeoutRef.current);
     void audioContextRef.current?.close().catch((audioError: unknown) => {
       console.error('[SociaBuzz] Audio context could not be closed:', audioError);
     });
@@ -368,17 +359,6 @@ export default function SociabuzzPage() {
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       )}
-      {visible && soundPlaying && (
-        <div
-          role="status"
-          aria-label="Suara alert sedang diputar"
-          className="pointer-events-none fixed right-5 top-5 flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-slate-950/85 px-3 py-2 text-emerald-200 shadow-lg backdrop-blur"
-        >
-          <Volume2 size={16} />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Audio</span>
-        </div>
-      )}
-
       {isAdmin && (
         <>
           <button
