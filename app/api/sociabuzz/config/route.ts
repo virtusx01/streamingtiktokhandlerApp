@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { isAdminActionRequest } from '@/lib/adb-queue';
 import { getSetting, setSetting } from '@/lib/db';
 
 const CONFIG_KEY = 'sociabuzzAlertConfig';
+const TOKEN_KEY = 'sociabuzzWebhookToken';
 const TOKEN_HASH_KEY = 'sociabuzzWebhookTokenHash';
 const DEFAULT_HTML = '<div class="alert"><strong>{{supporter}}</strong><span>mengirim dukungan</span><b>Rp {{amount}}</b><p>{{message}}</p></div>';
 
@@ -25,7 +25,11 @@ export async function GET() {
     durationMs: Number.isInteger(safeConfig.durationMs) && safeConfig.durationMs >= 1000 && safeConfig.durationMs <= 60000
       ? safeConfig.durationMs
       : 8000,
-    webhookTokenConfigured: Boolean(getSetting(TOKEN_HASH_KEY, '')),
+    webhookTokenConfigured: Boolean(
+      process.env.SOCIABUZZ_WEBHOOK_TOKEN ||
+      getSetting(TOKEN_KEY, '') ||
+      getSetting(TOKEN_HASH_KEY, ''),
+    ),
   });
 }
 
@@ -57,10 +61,19 @@ export async function POST(req: Request) {
 
     setSetting(CONFIG_KEY, { mode, html, durationMs });
     if (typeof webhookToken === 'string' && webhookToken.length > 0) {
-      setSetting(TOKEN_HASH_KEY, createHash('sha256').update(webhookToken).digest('hex'));
+      setSetting(TOKEN_KEY, webhookToken);
+      setSetting(TOKEN_HASH_KEY, '');
     }
 
-    return NextResponse.json({ success: true, webhookTokenConfigured: Boolean(webhookToken || getSetting(TOKEN_HASH_KEY, '')) });
+    return NextResponse.json({
+      success: true,
+      webhookTokenConfigured: Boolean(
+        process.env.SOCIABUZZ_WEBHOOK_TOKEN ||
+        webhookToken ||
+        getSetting(TOKEN_KEY, '') ||
+        getSetting(TOKEN_HASH_KEY, ''),
+      ),
+    });
   } catch (error) {
     console.error('[SociaBuzz] Failed to save alert config:', error);
     return NextResponse.json({ error: 'Gagal menyimpan konfigurasi SociaBuzz.' }, { status: 500 });

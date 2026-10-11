@@ -54,7 +54,8 @@ function getPresentedTokenCandidates(req: Request, bodyObject?: unknown): string
   }
 
   const headerNames = [
-    'x-webhook-token', 'x-webhook-secret', 'x-sociabuzz-token', 'x-hook-token', 'x-api-key', 'x-token', 'x-signature'
+    'x-webhook-token', 'x-webhook-secret', 'x-sociabuzz-token', 'x-sociabuzz-webhook-token',
+    'x-hook-token', 'x-api-key', 'x-token', 'x-signature', 'x-sbwhook', 'sbwhook'
   ];
   for (const name of headerNames) {
     collect(req.headers.get(name));
@@ -66,30 +67,43 @@ function getPresentedTokenCandidates(req: Request, bodyObject?: unknown): string
   collect(query.get('webhookToken'));
   collect(query.get('api_key'));
   collect(query.get('apikey'));
+  collect(query.get('secret'));
+  collect(query.get('sbwhook'));
 
   if (bodyObject && typeof bodyObject === 'object' && !Array.isArray(bodyObject)) {
     const body = bodyObject as Record<string, unknown>;
     collect(body.token);
     collect(body.webhookToken);
     collect(body.webhook_token);
+    collect(body.webhook_secret);
     collect(body.api_key);
     collect(body.apiKey);
     collect(body.authorization);
+    collect(body.secret);
+    collect(body.sbwhook);
   }
 
   return candidates;
 }
 
-function tokenMatches(presentedToken: string, expectedHash: unknown): boolean {
-  if (!presentedToken || typeof expectedHash !== 'string' || !/^[a-f0-9]{64}$/i.test(expectedHash)) return false;
+function tokenMatches(presentedToken: string, expectedToken: unknown): boolean {
+  if (!presentedToken || typeof expectedToken !== 'string' || !expectedToken) return false;
+  const presentedBytes = Buffer.from(presentedToken, 'utf8');
+  const expectedBytes = Buffer.from(expectedToken, 'utf8');
+  return presentedBytes.length === expectedBytes.length && timingSafeEqual(presentedBytes, expectedBytes);
+}
+
+function isLegacyHashMatch(presentedToken: string, expectedHash: unknown): boolean {
+  if (typeof expectedHash !== 'string' || !/^[a-f0-9]{64}$/i.test(expectedHash)) return false;
   const presentedHash = createHash('sha256').update(presentedToken).digest();
   const configuredHash = Buffer.from(expectedHash, 'hex');
   return timingSafeEqual(presentedHash, configuredHash);
 }
 
 export async function POST(req: Request) {
-  const expectedHash = getSetting('sociabuzzWebhookTokenHash', '');
-  if (!expectedHash) {
+  const expectedToken = process.env.SOCIABUZZ_WEBHOOK_TOKEN || getSetting('sociabuzzWebhookToken', '');
+  const legacyTokenHash = getSetting('sociabuzzWebhookTokenHash', '');
+  if (!expectedToken && !legacyTokenHash) {
     return NextResponse.json({ error: 'Webhook SociaBuzz belum dikonfigurasi oleh admin.' }, { status: 503 });
   }
 
@@ -100,16 +114,24 @@ export async function POST(req: Request) {
     }
 
     let parsedBody: unknown = {};
+    const contentType = req.headers.get('content-type') || '';
     if (rawBody.trim()) {
-      try {
-        parsedBody = JSON.parse(rawBody);
-      } catch {
-        parsedBody = {};
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        parsedBody = Object.fromEntries(new URLSearchParams(rawBody));
+      } else {
+        try {
+          parsedBody = JSON.parse(rawBody);
+        } catch {
+          parsedBody = {};
+        }
       }
     }
 
     const tokenCandidates = getPresentedTokenCandidates(req, parsedBody);
-    const isValid = tokenCandidates.some(candidate => tokenMatches(candidate, expectedHash));
+    const isValid = tokenCandidates.some(candidate =>
+      (expectedToken && tokenMatches(candidate, expectedToken)) ||
+      (legacyTokenHash && isLegacyHashMatch(candidate, legacyTokenHash))
+    );
     if (!isValid) {
       return NextResponse.json({ error: 'Webhook token tidak valid.' }, { status: 401 });
     }

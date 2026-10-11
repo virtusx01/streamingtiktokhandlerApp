@@ -252,7 +252,7 @@ export default function SociabuzzPage() {
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
                 <label htmlFor="sociabuzz-token" className="mb-2 block text-sm font-semibold">Webhook token</label>
-                <p className="mb-3 text-xs leading-5 text-slate-400">Buat token acak minimal 16 karakter, masukkan di sini dan gunakan token yang sama pada pengaturan webhook SociaBuzz. Aplikasi hanya menyimpan hash-nya.</p>
+                <p className="mb-3 text-xs leading-5 text-slate-400">Masukkan token yang sama dengan pengaturan webhook SociaBuzz. Token disimpan sebagai teks biasa agar dapat dicocokkan langsung; batasi akses ke database dan URL callback.</p>
                 <input
                   id="sociabuzz-token"
                   type="password"
@@ -268,7 +268,7 @@ export default function SociabuzzPage() {
                     <Copy size={14} /> {copied ? 'Tersalin' : 'Salin URL'}
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">Untuk SociaBuzz yang mengirim token lewat URL, isi token yang sama di atas lalu salin URL. URL salinan memuat token pada parameter <code>?token=</code>; jaga URL tersebut tetap privat.</p>
+                <p className="mt-2 text-xs text-slate-500">Isi token yang sama di atas lalu salin URL untuk parameter token URL. URL salinan memuat token pada parameter <code>?token=</code>; jaga URL tersebut tetap privat.</p>
               </div>
 
               {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-200">{error}</p>}
