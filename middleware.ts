@@ -16,7 +16,9 @@ const PUBLIC_PREFIXES = [
   '/api',
   // Public stream overlays; admin-only controls are hidden by the page itself.
   '/widget',
-  '/comment'
+  '/comment',
+  // The callback authenticates requests with its own webhook token.
+  '/sociabuzz/callback'
 ];
 
 async function isValidAdmin(token?: string): Promise<boolean> {
