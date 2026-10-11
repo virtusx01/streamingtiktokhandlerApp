@@ -67,6 +67,12 @@ export default function SociabuzzPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const callbackUrl = webhookToken.trim()
+    ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
+    : CALLBACK_URL;
+  const displayedCallbackUrl = webhookToken.trim()
+    ? `${CALLBACK_URL}?token=********`
+    : CALLBACK_URL;
 
   useEffect(() => {
     void fetch('/api/sociabuzz/config')
@@ -141,7 +147,7 @@ export default function SociabuzzPage() {
 
   const copyCallbackUrl = async () => {
     try {
-      await navigator.clipboard.writeText(CALLBACK_URL);
+      await navigator.clipboard.writeText(callbackUrl);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch (copyError) {
@@ -257,12 +263,12 @@ export default function SociabuzzPage() {
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
                 />
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <code className="min-w-0 flex-1 break-all rounded-lg bg-black/40 px-3 py-2 text-xs text-cyan-200">{CALLBACK_URL}</code>
+                  <code className="min-w-0 flex-1 break-all rounded-lg bg-black/40 px-3 py-2 text-xs text-cyan-200">{displayedCallbackUrl}</code>
                   <button type="button" onClick={copyCallbackUrl} className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-800">
                     <Copy size={14} /> {copied ? 'Tersalin' : 'Salin URL'}
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">Endpoint menerima token melalui <code>Authorization: Bearer</code>, <code>x-webhook-token</code>, atau <code>x-sociabuzz-token</code>.</p>
+                <p className="mt-2 text-xs text-slate-500">Untuk SociaBuzz yang mengirim token lewat URL, isi token yang sama di atas lalu salin URL. URL salinan memuat token pada parameter <code>?token=</code>; jaga URL tersebut tetap privat.</p>
               </div>
 
               {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-200">{error}</p>}
