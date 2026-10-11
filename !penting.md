@@ -106,9 +106,10 @@ fullscreen yang menghalangi overlay publik.
   database telah berisi tabel.
 - Migrasi untuk mengubah schema harus dibuat dan diuji dengan hati-hati pada
   database development. Jangan menjalankan reset pada database production.
-- `lib/db.ts` masih memuat helper serta tipe giveaway/WhatsApp. Pastikan route
-  atau UI pemakainya masih ada sebelum memperluas fitur tersebut; jangan
-  menyimpulkan bahwa semua tabel legacy adalah bagian dari alur utama ADB.
+- Halaman giveaway dan integrasi WhatsApp yang hanya dipakai halaman tersebut
+  telah dihapus. Migrasi `20261011010000_remove_giveaway_feature` menghapus
+  tabel peserta giveaway, tabel anggota WA, dan setting `giveaway_*` dari
+  Supabase; inisialisasi SQLite lokal juga membuang tabel/setting yang sama.
 
 ## Peta folder dan entry point
 
@@ -197,5 +198,5 @@ proses in-memory dan listener bukan worker serverless yang tahan suspend.
   menampilkan warning pola file luas di `app/api/tts/route.ts` dan peringatan
   convention `middleware`; keduanya bukan error build.
 - Sebelum commit, periksa `git status` dan stage file yang memang terkait tugas.
-  Worktree pernah memiliki perubahan lokal pada file konfigurasi serta
-  penghapusan fitur giveaway; jangan ikut commit/revert tanpa instruksi.
+  Worktree pernah memiliki perubahan lokal pada file konfigurasi; jangan ikut
+  commit/revert tanpa instruksi.

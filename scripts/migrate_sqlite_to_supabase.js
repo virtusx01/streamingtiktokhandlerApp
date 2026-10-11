@@ -71,37 +71,6 @@ async function run() {
     last_updated: r.last_updated ? new Date(r.last_updated).toISOString() : new Date().toISOString()
   }));
 
-  // 6. giveaway_participants
-  await migrateTable('giveaway_participants', 'username', r => ({
-    username: r.username,
-    nickname: r.nickname,
-    profile_picture: r.profile_picture || null,
-    has_followed: r.has_followed || 0,
-    has_liked: r.has_liked || 0,
-    has_shared: r.has_shared || 0,
-    has_commented: r.has_commented || 0,
-    has_wa_group: r.has_wa_group || 0,
-    wa_member_tag: r.wa_member_tag || null,
-    wa_phone: r.wa_phone || null,
-    is_eligible: r.is_eligible || 0,
-    is_tester: r.is_tester || 0,
-    registered_at: r.registered_at ? new Date(r.registered_at).toISOString() : new Date().toISOString(),
-    last_updated: r.last_updated ? new Date(r.last_updated).toISOString() : new Date().toISOString()
-  }));
-
-  // 7. wa_group_members
-  await migrateTable('wa_group_members', 'group_jid, jid', r => ({
-    group_jid: r.group_jid,
-    jid: r.jid,
-    phone: r.phone || null,
-    member_tag: r.member_tag || null,
-    push_name: r.push_name || null,
-    role: r.role || 'member',
-    has_absen: r.has_absen || 0,
-    absen_at: r.absen_at ? new Date(r.absen_at).toISOString() : null,
-    last_seen: r.last_seen ? new Date(r.last_seen).toISOString() : new Date().toISOString()
-  }));
-
   console.log('\n--- ALL TABLES MIGRATED TO SUPABASE SUCCESSFULLY ---');
 }
 

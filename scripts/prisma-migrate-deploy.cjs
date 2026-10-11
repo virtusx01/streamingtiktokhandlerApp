@@ -48,6 +48,15 @@ if (status.status === 0) {
 }
 
 const statusOutput = `${status.stdout || ''}\n${status.stderr || ''}`;
+if (
+  statusOutput.includes('Following migration have not yet been applied:') ||
+  statusOutput.includes('Following migrations have not yet been applied:')
+) {
+  const deploy = runPrisma(['migrate', 'deploy', '--schema', schemaFile], { stdio: 'inherit' });
+  if (deploy.error) throw deploy.error;
+  process.exit(deploy.status ?? 1);
+}
+
 if (!statusOutput.includes('P3005')) process.exit(status.status ?? 1);
 
 console.log('Existing database detected; applying the initial ADB migration with Prisma and baselining it.');

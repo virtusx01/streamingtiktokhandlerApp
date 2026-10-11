@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { emitFollowEvent } from '@/lib/events';
 import { isDuplicate } from '@/lib/dedup';
-import { updateGiveawayFollow } from '@/lib/db';
 
 export async function POST(req: Request) {
   try {

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { emitCommentEvent } from '@/lib/events';
 import { isDuplicate } from '@/lib/dedup';
-import { updateGiveawayComment } from '@/lib/db';
 
 export async function POST(req: Request) {
   try {
