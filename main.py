@@ -76,10 +76,15 @@ async def safe_post(url, payload, event_type="Event"):
     try:
         headers = {"Authorization": f"Bearer {LISTENER_TOKEN}"} if LISTENER_TOKEN else {}
         response = await http_client.post(url, json=payload, headers=headers, timeout=8.0)
+        if not response.is_success:
+            print(
+                f"⚠️ [API Warning] {event_type} rejected by backend "
+                f"(HTTP {response.status_code}): {response.text[:300]}",
+                flush=True
+            )
         return response
-    except httpx.ConnectError:
-        # Backend not running or still starting
-        pass
+    except httpx.RequestError as e:
+        print(f"⚠️ [API Warning] Cannot send {event_type} to {url}: {e}", flush=True)
     except Exception as e:
         print(f"⚠️ [API Warning] Failed to send {event_type}: {e}", flush=True)
     return None
@@ -226,7 +231,7 @@ def create_client(username: str) -> TikTokLiveClient:
             await safe_post(COMMENT_EVENT_URL, payload, "Comment")
             print(f"💬 COMMENT: {nickname}: {comment_text}", flush=True)
         except Exception as e:
-            pass
+            print(f"![Error Comment] {e}", flush=True)
 
     @client.on(LikeEvent)
     async def on_like(event: LikeEvent):
@@ -246,7 +251,7 @@ def create_client(username: str) -> TikTokLiveClient:
             }
             await safe_post(LIKE_EVENT_URL, payload, "Like")
         except Exception as e:
-            pass
+            print(f"![Error Like] {e}", flush=True)
 
     @client.on(JoinEvent)
     async def on_join(event: JoinEvent):
@@ -265,7 +270,7 @@ def create_client(username: str) -> TikTokLiveClient:
             }
             await safe_post(JOIN_EVENT_URL, payload, "Join")
         except Exception as e:
-            pass
+            print(f"![Error Join] {e}", flush=True)
 
     @client.on(FollowEvent)
     async def on_follow(event: FollowEvent):
@@ -284,7 +289,7 @@ def create_client(username: str) -> TikTokLiveClient:
             }
             await safe_post(FOLLOW_EVENT_URL, payload, "Follow")
         except Exception as e:
-            pass
+            print(f"![Error Follow] {e}", flush=True)
 
     @client.on(SubscribeEvent)
     async def on_subscribe(event: SubscribeEvent):
@@ -297,7 +302,7 @@ def create_client(username: str) -> TikTokLiveClient:
             }
             await safe_post(FAN_EVENT_URL, payload, "Fan")
         except Exception as e:
-            pass
+            print(f"![Error Fan] {e}", flush=True)
 
     @client.on(ShareEvent)
     async def on_share(event: ShareEvent):
@@ -316,7 +321,7 @@ def create_client(username: str) -> TikTokLiveClient:
             }
             await safe_post(SHARE_EVENT_URL, payload, "Share")
         except Exception as e:
-            pass
+            print(f"![Error Share] {e}", flush=True)
 
     return client
 

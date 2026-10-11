@@ -426,11 +426,18 @@ export default function WidgetPage() {
 
     const eventSource = new EventSource("/api/events");
     sseConnection.current = eventSource;
+    eventSource.onopen = () => {
+      console.info("[Widget] Connected to live event stream.");
+    };
+    eventSource.onerror = () => {
+      console.error(`[Widget] Live event stream disconnected (readyState=${eventSource.readyState}); reconnecting.`);
+    };
     
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
         const data = payload.data || payload;
+        console.info(`[Widget] Received ${payload.type || "unknown"} event.`);
         const widgetNotificationId = typeof data.widgetNotificationId === 'string'
           ? data.widgetNotificationId
           : undefined;
@@ -513,7 +520,9 @@ export default function WidgetPage() {
         }
 
         addToQueue(payload);
-      } catch (e) {}
+      } catch (e) {
+        console.error("[Widget] Failed to process live event:", e);
+      }
     };
 
     return () => {

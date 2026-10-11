@@ -75,14 +75,29 @@ running; it does not run the TikTok listener.
    It displays the notifications and settings configured by the admin; editor
    and configuration controls remain admin-only. Gift and like reward actions
    are queued server-side when their events are processed and executed in order
-   by the local agent. When Reward Actions (ADB) are active, the widget
-   notification is emitted only after the agent reports that the matching ADB
-   command completed successfully; failed ADB commands do not produce that
-   notification. The agent does not claim another queued command until the
-   widget confirms that the previous ADB reward notification finished displaying.
-   Pending notifications are replayed if the widget reconnects. Events without
-   queued ADB actions are emitted immediately. Apply pending database migrations
-   before deploying changes.
+   by the local agent. Widget notifications are emitted independently of ADB:
+   an ADB failure does not prevent the corresponding gift or like notification.
+   Apply pending database migrations before deploying changes.
+
+### Diagnosing missing live notifications
+
+The reward configurator's **Test** button tests ADB actions, not the TikTok
+listener. Test the actual event path while the target account is live:
+
+1. Confirm the dashboard says the listener is connected to the LIVE, not just
+   running or waiting for the account to go live.
+2. In the server logs, look for `GIFT DETECTED` (or `COMMENT`, etc.) and then
+   an `[API Warning]` or `[Error ...]` message. API warnings include the HTTP
+   status when the backend rejects an event.
+3. In the browser console for the `/widget` browser source, look for
+   `[Widget] Connected to live event stream.` and
+   `[Widget] Received gift` (or the relevant event). A disconnected stream
+   reports its ready state and automatically attempts to reconnect.
+
+If the listener never logs the real gift or join event, investigate the TikTok
+LIVE connection. If the server receives the event but the widget stream does
+not, investigate the SSE connection/deployment. Do not share listener or ADB
+tokens when sharing logs.
 
 If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
 or key events, Android has denied input injection even though USB debugging is
