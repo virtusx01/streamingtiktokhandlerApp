@@ -10,7 +10,7 @@ export default function AdminNav() {
   const [loggingOut, setLoggingOut] = useState(false);
 
   // Do not display on login page or stream overlay pages
-  if (pathname === '/login' || pathname === '/widget' || pathname === '/comment') return null;
+  if (pathname === '/login' || pathname === '/widget' || pathname === '/comment' || pathname === '/sociabuzz') return null;
 
   const handleLogout = async () => {
     setLoggingOut(true);
