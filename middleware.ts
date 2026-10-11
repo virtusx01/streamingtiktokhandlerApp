@@ -17,6 +17,8 @@ const PUBLIC_PREFIXES = [
   // Public stream overlays; admin-only controls are hidden by the page itself.
   '/widget',
   '/comment',
+  // Public SociaBuzz overlay; admin-only controls are hidden by the page itself.
+  '/sociabuzz',
   // The callback authenticates requests with its own webhook token.
   '/sociabuzz/callback'
 ];
