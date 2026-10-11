@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ShieldCheck, LogOut, LayoutDashboard, Layout, MessageSquare, Type } from 'lucide-react';
+import { ShieldCheck, LogOut, LayoutDashboard, Layout, MessageSquare, Type, HeartHandshake } from 'lucide-react';
 
 export default function AdminNav() {
   const pathname = usePathname();
@@ -30,6 +30,7 @@ export default function AdminNav() {
     { href: '/widget', label: 'Widget Overlay', icon: Layout },
     { href: '/comment', label: 'Komentar', icon: MessageSquare },
     { href: '/textberjalan', label: 'Text Berjalan', icon: Type },
+    { href: '/sociabuzz', label: 'SociaBuzz', icon: HeartHandshake },
   ];
 
   return (

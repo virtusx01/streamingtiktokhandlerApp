@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents } from '@/lib/events';
+import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents, subscribeToSociabuzzEvents } from '@/lib/events';
 import { isAdminActionRequest } from '@/lib/adb-queue';
 import { prisma } from '@/lib/prisma';
 
@@ -76,6 +76,7 @@ export async function GET(req: Request) {
       unsubscribers.push(subscribeToFanEvents((data) => sendEvent('fan', data)));
       unsubscribers.push(subscribeToShareEvents((data) => sendEvent('share', data)));
       unsubscribers.push(subscribeToStatusEvents((data) => sendEvent('status', data)));
+      unsubscribers.push(subscribeToSociabuzzEvents((data) => sendEvent('sociabuzz', data)));
 
       void (async () => {
         try {

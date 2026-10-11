@@ -25,6 +25,7 @@ export const JOIN_EVENT = 'join_event';
 export const FOLLOW_EVENT = 'follow_event';
 export const FAN_EVENT = 'fan_event';
 export const SHARE_EVENT = 'share_event';
+export const SOCIABUZZ_EVENT = 'sociabuzz_event';
 
 export function emitGiftEvent(data: any) {
   emitWithLog(GIFT_EVENT, data);
@@ -103,6 +104,17 @@ export function subscribeToShareEvents(callback: (data: any) => void) {
   };
 }
 
+export function emitSociabuzzEvent(data: any) {
+  emitWithLog(SOCIABUZZ_EVENT, data);
+}
+
+export function subscribeToSociabuzzEvents(callback: (data: any) => void) {
+  eventEmitter.on(SOCIABUZZ_EVENT, callback);
+  return () => {
+    eventEmitter.off(SOCIABUZZ_EVENT, callback);
+  };
+}
+
 export const STATUS_EVENT = 'status_event';
 
 export function emitStatusEvent(data: any) {
@@ -115,4 +127,3 @@ export function subscribeToStatusEvents(callback: (data: any) => void) {
     eventEmitter.off(STATUS_EVENT, callback);
   };
 }
-

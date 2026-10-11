@@ -110,6 +110,14 @@ fullscreen yang menghalangi overlay publik.
   telah dihapus. Migrasi `20261011010000_remove_giveaway_feature` menghapus
   tabel peserta giveaway, tabel anggota WA, dan setting `giveaway_*` dari
   Supabase; inisialisasi SQLite lokal juga membuang tabel/setting yang sama.
+- `/sociabuzz` adalah overlay alert SociaBuzz. Callback `POST
+  /sociabuzz/callback` menerima JSON, memvalidasi shared token dari header
+  `Authorization: Bearer`, `x-webhook-token`, atau `x-sociabuzz-token`, lalu
+  mengirim event melalui SSE `/api/events`. Token disimpan sebagai SHA-256 hash
+  pada setting `sociabuzzWebhookTokenHash`; admin mengatur token dan template
+  dari ikon pengaturan di halaman. Custom alert menerima HTML/CSS tanpa
+  JavaScript dan dirender pada iframe sandbox; placeholder yang didukung:
+  `{{supporter}}`, `{{amount}}`, `{{message}}`, dan `{{mediaUrl}}`.
 
 ## Peta folder dan entry point
 
