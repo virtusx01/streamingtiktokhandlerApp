@@ -21,7 +21,9 @@ const CUSTOM_PAYLOAD_KEYS = new Set([
   'username', 'nickname', 'display_name', 'comment', 'supporter_message',
   'supporterMessage', 'gifLink', 'mediaUrl', 'media_url', 'media',
   'image_url', 'imageUrl', 'fromText', 'from_text', 'from_label_text',
-  'quantity', 'gift_name', 'item', 'item_name', 'giftName',
+  'quantity', 'gift_name', 'item', 'item_name', 'giftName', 'sound_url',
+  'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
+  'notification_sound', 'notificationSound', 'sound', 'audio',
 ]);
 
 function selectCustomPayload(value: unknown): unknown {
@@ -95,6 +97,22 @@ function firstValue(objects: JsonObject[], keys: string[]): unknown {
     }
   }
   return undefined;
+}
+
+function firstHttpsUrl(objects: JsonObject[], keys: string[]): string {
+  for (const object of objects) {
+    for (const key of keys) {
+      const value = object[key];
+      if (typeof value !== 'string' || value.length > 2000) continue;
+      try {
+        const url = new URL(value);
+        if (url.protocol === 'https:') return url.toString();
+      } catch {
+        continue;
+      }
+    }
+  }
+  return '';
 }
 
 function valueAsString(value: unknown, fallback: string, maxLength: number): string {
@@ -246,6 +264,10 @@ export async function POST(req: Request) {
       '',
       2000,
     );
+    const soundUrl = firstHttpsUrl(objects, [
+      'sound_url', 'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
+      'notification_sound', 'notificationSound', 'sound', 'audio',
+    ]);
     const fromText = valueAsString(
       firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']),
       'mengirim',
@@ -258,7 +280,7 @@ export async function POST(req: Request) {
       receivedAt,
       eventType: valueAsString(root.message, 'unknown', 80),
       payloadFields: summarizePayload(parsedBody),
-      mapped: { amount: formattedAmount, supporter, message, mediaUrl, fromText },
+      mapped: { amount: formattedAmount, supporter, message, mediaUrl, soundUrl, fromText },
     };
     const existingLogs: unknown = getSetting(WEBHOOK_LOGS_KEY, []);
     const logs = Array.isArray(existingLogs) ? existingLogs : [];
@@ -269,6 +291,7 @@ export async function POST(req: Request) {
       supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']) ?? null,
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
       mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
+      soundUrl: soundUrl || null,
       fromText: firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']) ?? null,
       payload: selectCustomPayload(parsedBody),
     };
@@ -278,6 +301,7 @@ export async function POST(req: Request) {
       supporter,
       message,
       mediaUrl,
+      soundUrl,
       fromText,
       raw: rawAlert,
       timestamp: Date.now(),

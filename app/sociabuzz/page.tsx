@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, X } from 'lucide-react';
 
 type AlertConfig = {
@@ -17,12 +17,14 @@ type AlertData = {
   supporter: string;
   message: string;
   mediaUrl: string;
+  soundUrl?: string;
   fromText?: string;
   raw?: {
     amount: string | number | null;
     supporter: string | number | null;
     message: string | number | null;
     mediaUrl: string | number | null;
+    soundUrl?: string | null;
     fromText: string | number | null;
     payload: unknown;
   };
@@ -54,13 +56,6 @@ body{display:flex;align-items:center;justify-content:center;min-height:100vh;pad
 @keyframes randomShuffleMedia{0%,33.32%{background-image:url('https://xkslvfdguwvrhxetbmyw.supabase.co/storage/v1/object/public/assets/c-d-kompilasi-final.webp')}}
 @keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
 @keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}`;
-const TEST_ALERT: AlertData = {
-  amount: '25000',
-  supporter: 'Supporter Test',
-  message: 'Semangat terus stream-nya!',
-  mediaUrl: 'https://example.com/media.mp4',
-};
-
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -112,12 +107,81 @@ export default function SociabuzzPage() {
   const [loadingWebhookLogs, setLoadingWebhookLogs] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [testError, setTestError] = useState('');
+  const [testingAlert, setTestingAlert] = useState(false);
+  const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
   const displayedCallbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=********`
     : CALLBACK_URL;
+
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current) audioContextRef.current = new AudioContext();
+    return audioContextRef.current;
+  }, []);
+
+  const unlockAudio = useCallback(() => {
+    try {
+      void getAudioContext().resume()
+        .then(() => setAudioNeedsUnlock(false))
+        .catch((audioError: unknown) => {
+          console.error('[SociaBuzz] Audio could not be enabled:', audioError);
+          setAudioNeedsUnlock(true);
+        });
+    } catch (audioError) {
+      console.error('[SociaBuzz] Audio could not be initialized:', audioError);
+      setAudioNeedsUnlock(true);
+    }
+  }, [getAudioContext]);
+
+  const playDefaultAlertSound = useCallback(async () => {
+    const context = getAudioContext();
+    if (context.state !== 'running') await context.resume();
+
+    const notes = [880, 1174.66, 1567.98];
+    const startAt = context.currentTime;
+    notes.forEach((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const noteStart = startAt + index * 0.13;
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, noteStart);
+      gain.gain.exponentialRampToValueAtTime(0.18, noteStart + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.38);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(noteStart);
+      oscillator.stop(noteStart + 0.4);
+    });
+    setAudioNeedsUnlock(false);
+  }, [getAudioContext]);
+
+  const playAlertSound = useCallback(async (soundUrl?: string) => {
+    if (soundUrl) {
+      const audio = new Audio(soundUrl);
+      audio.volume = 1;
+      audioRef.current = audio;
+      try {
+        await audio.play();
+        setAudioNeedsUnlock(false);
+        return;
+      } catch (audioError) {
+        console.warn('[SociaBuzz] Webhook audio could not be played; using the default alert sound:', audioError);
+      }
+    }
+
+    try {
+      await playDefaultAlertSound();
+    } catch (audioError) {
+      console.error('[SociaBuzz] Alert sound could not be played:', audioError);
+      setAudioNeedsUnlock(true);
+    }
+  }, [playDefaultAlertSound]);
 
   useEffect(() => {
     void fetch('/api/sociabuzz/config')
@@ -147,16 +211,25 @@ export default function SociabuzzPage() {
           supporter: typeof data.supporter === 'string' ? data.supporter : 'Supporter',
           message: typeof data.message === 'string' ? data.message : '',
           mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : '',
+          soundUrl: typeof data.soundUrl === 'string' ? data.soundUrl : undefined,
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
           raw: data.raw,
         });
         setVisible(true);
+        void playAlertSound(typeof data.soundUrl === 'string' ? data.soundUrl : undefined);
       } catch (parseError) {
         console.error('[SociaBuzz] Could not parse incoming event:', parseError);
       }
     };
     source.onerror = (event) => console.warn('[SociaBuzz] Event stream connection issue:', event);
     return () => source.close();
+  }, [playAlertSound]);
+
+  useEffect(() => () => {
+    audioRef.current?.pause();
+    void audioContextRef.current?.close().catch((audioError: unknown) => {
+      console.error('[SociaBuzz] Audio context could not be closed:', audioError);
+    });
   }, []);
 
   useEffect(() => {
@@ -177,6 +250,7 @@ export default function SociabuzzPage() {
           supporter: alert.raw.supporter == null ? alert.supporter : String(alert.raw.supporter),
           message: alert.raw.message == null ? alert.message : String(alert.raw.message),
           mediaUrl: alert.raw.mediaUrl == null ? alert.mediaUrl : String(alert.raw.mediaUrl),
+          soundUrl: alert.raw.soundUrl == null ? alert.soundUrl : String(alert.raw.soundUrl),
           fromText: alert.raw.fromText == null ? alert.fromText : String(alert.raw.fromText),
         }
       : alert;
@@ -243,6 +317,22 @@ export default function SociabuzzPage() {
     }
   };
 
+  const testAlert = async () => {
+    setTestingAlert(true);
+    setTestError('');
+    unlockAudio();
+    try {
+      const response = await fetch('/api/sociabuzz/test', { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Gagal mengirim test alert.');
+    } catch (testAlertError) {
+      console.error('[SociaBuzz] Test alert failed:', testAlertError);
+      setTestError(testAlertError instanceof Error ? testAlertError.message : 'Gagal mengirim test alert.');
+    } finally {
+      setTestingAlert(false);
+    }
+  };
+
   return (
     <main className="fixed inset-0 overflow-hidden bg-transparent">
       <style jsx global>{`html, body { background: transparent !important; overflow: hidden; }`}</style>
@@ -259,14 +349,13 @@ export default function SociabuzzPage() {
         <>
           <button
             type="button"
-            onClick={() => {
-              setAlert(TEST_ALERT);
-              setVisible(true);
-            }}
-            className="fixed bottom-5 left-5 rounded-lg border border-white/15 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur hover:bg-slate-800"
+            onClick={() => void testAlert()}
+            disabled={testingAlert}
+            className="fixed bottom-5 left-5 rounded-lg border border-white/15 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur hover:bg-slate-800 disabled:opacity-60"
           >
-            Test Alert
+            {testingAlert ? 'Mengirim...' : 'Test Alert'}
           </button>
+          {testError && <p role="alert" className="fixed bottom-16 left-5 max-w-xs rounded-lg bg-red-950/90 px-3 py-2 text-xs text-red-200">{testError}</p>}
           <button
             type="button"
             aria-label="Pengaturan SociaBuzz"
@@ -276,6 +365,15 @@ export default function SociabuzzPage() {
             <Settings size={19} />
           </button>
         </>
+      )}
+      {audioNeedsUnlock && (
+        <button
+          type="button"
+          onClick={unlockAudio}
+          className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg border border-amber-300/40 bg-slate-950/90 px-4 py-2 text-xs font-semibold text-amber-100 shadow-lg backdrop-blur"
+        >
+          Klik untuk mengaktifkan suara alert
+        </button>
       )}
 
       {settingsOpen && isAdmin && (

@@ -113,7 +113,10 @@ fullscreen yang menghalangi overlay publik.
 - `/sociabuzz` adalah overlay alert SociaBuzz. Callback `POST
   /sociabuzz/callback` menerima JSON, memvalidasi shared token dari header
   `Authorization: Bearer`, `x-webhook-token`, atau `x-sociabuzz-token`, lalu
-  mengirim event melalui SSE `/api/events`. Token disimpan sebagai SHA-256 hash
+  mengirim event melalui SSE `/api/events`. Test alert admin dikirim melalui
+  `POST /api/sociabuzz/test` ke seluruh klien SSE yang terhubung. Audio memakai
+  URL HTTPS dari payload webhook bila tersedia, atau bunyi default; browser yang
+  memblokir autoplay meminta aktivasi suara dari halaman overlay. Token disimpan sebagai SHA-256 hash
   pada setting `sociabuzzWebhookTokenHash`; admin mengatur token dan template
   dari ikon pengaturan di halaman. Custom alert menerima HTML/CSS tanpa
   JavaScript dan dirender pada iframe sandbox; placeholder yang didukung:
