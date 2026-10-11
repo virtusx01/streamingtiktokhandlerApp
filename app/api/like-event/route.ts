@@ -90,6 +90,8 @@ export async function POST(req: Request) {
         username,
         nickname,
         milestoneCount: isMilestone ? milestoneCount : undefined,
+        widgetAckRequired: true,
+        widgetNotificationAck: false,
         widgetEvent: { type: 'like', data: widgetEvent },
       });
       notificationDeferredUntilAdbClaim = true;

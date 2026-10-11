@@ -78,8 +78,11 @@ running; it does not run the TikTok listener.
    by the local agent. When Reward Actions (ADB) are active, the widget
    notification is emitted only after the agent reports that the matching ADB
    command completed successfully; failed ADB commands do not produce that
-   notification. Events without queued ADB actions are emitted immediately.
-   Apply pending database migrations before deploying changes.
+   notification. The agent does not claim another queued command until the
+   widget confirms that the previous ADB reward notification finished displaying.
+   Pending notifications are replayed if the widget reconnects. Events without
+   queued ADB actions are emitted immediately. Apply pending database migrations
+   before deploying changes.
 
 If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
 or key events, Android has denied input injection even though USB debugging is

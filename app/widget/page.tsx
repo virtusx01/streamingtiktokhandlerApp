@@ -74,6 +74,7 @@ interface NotificationItem {
     rawComment?: string;
     executionDurationMs?: number;
     isTest?: boolean;
+    widgetNotificationId?: string;
 }
 
 interface WidgetConfig {
@@ -198,6 +199,81 @@ const VOICE_OPTIONS = [
 ];
 
 const LOCAL_STORAGE_KEY = "widgetConfig_v2";
+const PENDING_WIDGET_ACKS_KEY = "pendingWidgetNotificationAcks";
+const widgetAckRequestsInFlight = new Set<string>();
+const widgetAckRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const widgetAckRetryAttempts = new Map<string, number>();
+
+function readPendingWidgetAcks(): string[] {
+  try {
+    const value = localStorage.getItem(PENDING_WIDGET_ACKS_KEY);
+    const parsed: unknown = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch (error) {
+    console.error('[Widget] Failed to read pending notification acknowledgments:', error);
+    return [];
+  }
+}
+
+function persistPendingWidgetAcks(ids: string[]) {
+  try {
+    localStorage.setItem(PENDING_WIDGET_ACKS_KEY, JSON.stringify(ids));
+  } catch (error) {
+    console.error('[Widget] Failed to persist notification acknowledgment:', error);
+  }
+}
+
+function submitWidgetNotificationAck(notificationId: string) {
+  if (widgetAckRequestsInFlight.has(notificationId)) return;
+  const retryTimer = widgetAckRetryTimers.get(notificationId);
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    widgetAckRetryTimers.delete(notificationId);
+  }
+  widgetAckRequestsInFlight.add(notificationId);
+
+  void (async () => {
+    let succeeded = false;
+    try {
+      const response = await fetch('/api/widget/notification-ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationId }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      persistPendingWidgetAcks(readPendingWidgetAcks().filter(id => id !== notificationId));
+      widgetAckRetryAttempts.delete(notificationId);
+      succeeded = true;
+    } catch (error) {
+      console.error(`[Widget] Notification acknowledgment failed (${notificationId}):`, error);
+    } finally {
+      widgetAckRequestsInFlight.delete(notificationId);
+    }
+
+    if (!succeeded) {
+      const attempts = (widgetAckRetryAttempts.get(notificationId) ?? 0) + 1;
+      widgetAckRetryAttempts.set(notificationId, attempts);
+      const delay = Math.min(30000, 1000 * 2 ** Math.min(attempts - 1, 5));
+      const timer = setTimeout(() => {
+        widgetAckRetryTimers.delete(notificationId);
+        submitWidgetNotificationAck(notificationId);
+      }, delay);
+      widgetAckRetryTimers.set(notificationId, timer);
+    }
+  })();
+}
+
+function acknowledgeWidgetNotification(notificationId?: string) {
+  if (!notificationId || typeof window === 'undefined') return;
+
+  const pending = readPendingWidgetAcks();
+  if (!pending.includes(notificationId)) {
+    pending.push(notificationId);
+    persistPendingWidgetAcks(pending);
+  }
+  submitWidgetNotificationAck(notificationId);
+}
 
 export default function WidgetPage() {
   const [elements, setElements] = useState<Element[]>([]);
@@ -231,6 +307,8 @@ export default function WidgetPage() {
   const [notifVisible, setNotifVisible] = useState(false);
   const notificationQueue = useRef<NotificationItem[]>([]);
   const isProcessingQueue = useRef(false);
+  const interruptFlag = useRef(false);
+  const activeNotificationRef = useRef<NotificationItem | null>(null);
   const currentAudioSource = useRef<AudioBufferSourceNode | null>(null);
   const [audioLocked, setAudioLocked] = useState(true);
 
@@ -263,9 +341,11 @@ export default function WidgetPage() {
             const timeSinceLastUpdate = Date.now() - lastProcessTime.current;
             if (timeSinceLastUpdate > 30000) { // 30 seconds stuck
                 console.warn("⚠️ [WATCHDOG] Queue stuck for 30s. Force resetting...");
+                const notificationId = activeNotificationRef.current?.widgetNotificationId;
                 isProcessingQueue.current = false;
                 setNotifVisible(false);
                 setActiveNotification(null);
+                setTimeout(() => acknowledgeWidgetNotification(notificationId), 400);
                 processQueue();
             }
         }
@@ -331,7 +411,14 @@ export default function WidgetPage() {
   const sseConnection = useRef<EventSource | null>(null);
   const duplicateGuard = useRef<Set<string>>(new Set());
   const processedEventIds = useRef<Set<string>>(new Set()); // Permanent dedup for exact event IDs
+  const seenWidgetNotificationIds = useRef<Set<string>>(new Set());
   const lastLikeMilestone = useRef<number>(0);
+
+  useEffect(() => {
+    for (const notificationId of readPendingWidgetAcks()) {
+      submitWidgetNotificationAck(notificationId);
+    }
+  }, []);
 
   useEffect(() => {
     loadConfig();
@@ -344,15 +431,30 @@ export default function WidgetPage() {
       try {
         const payload = JSON.parse(event.data);
         const data = payload.data || payload;
+        const widgetNotificationId = typeof data.widgetNotificationId === 'string'
+          ? data.widgetNotificationId
+          : undefined;
+        if (widgetNotificationId) {
+          if (seenWidgetNotificationIds.current.has(widgetNotificationId)) return;
+          seenWidgetNotificationIds.current.add(widgetNotificationId);
+          if (seenWidgetNotificationIds.current.size > 500) {
+            const oldestIds = seenWidgetNotificationIds.current.values();
+            for (let index = 0; index < 100; index++) {
+              const oldestId = oldestIds.next().value;
+              if (oldestId !== undefined) seenWidgetNotificationIds.current.delete(oldestId);
+            }
+          }
+        }
+        const requiresWidgetAck = Boolean(widgetNotificationId);
         const rawEventId = String(data.eventId || data.msgId || data.giftId || data.timestamp || "");
         const contentHash = `${data.username}_${data.giftName || data.comment || ""}_${data.repeatCount || 1}`;
         
         // 1. Absolute Dedup (If eventId is perfectly identical, drop it permanently)
-        if (data.eventId && processedEventIds.current.has(data.eventId)) {
+        if (!requiresWidgetAck && data.eventId && processedEventIds.current.has(data.eventId)) {
             console.log(`[Widget] Dropped identical eventId: ${data.eventId}`);
             return;
         }
-        if (data.eventId) processedEventIds.current.add(data.eventId);
+        if (!requiresWidgetAck && data.eventId) processedEventIds.current.add(data.eventId);
         
         // Clean up permanent cache to avoid memory leaks (keep last 500)
         if (processedEventIds.current.size > 500) {
@@ -368,23 +470,23 @@ export default function WidgetPage() {
         }
 
         // 2. Primary Dedup (Event ID fallback for 10s)
-        if (rawEventId && duplicateGuard.current.has(`${payload.type}_${rawEventId}`)) return;
+        if (!requiresWidgetAck && rawEventId && duplicateGuard.current.has(`${payload.type}_${rawEventId}`)) return;
         
         // 3. Secondary Dedup (Content Hash - 3s window)
         const contentDedupId = `${payload.type}_content_${contentHash}`;
-        if (!data.isTest && duplicateGuard.current.has(contentDedupId)) {
+        if (!requiresWidgetAck && !data.isTest && duplicateGuard.current.has(contentDedupId)) {
             console.log(`[Widget] Dropped content duplicate: ${contentDedupId}`);
             return;
         }
 
         // Register in guard
-        if (rawEventId) {
+        if (!requiresWidgetAck && rawEventId) {
             const idKey = `${payload.type}_${rawEventId}`;
             duplicateGuard.current.add(idKey);
             setTimeout(() => duplicateGuard.current.delete(idKey), 10000); // 10s window
         }
         
-        if (!data.isTest) {
+        if (!requiresWidgetAck && !data.isTest) {
             duplicateGuard.current.add(contentDedupId);
             setTimeout(() => duplicateGuard.current.delete(contentDedupId), 3000); // 3s window for content match
         }
@@ -403,6 +505,8 @@ export default function WidgetPage() {
                 if (milestone > 0 && milestone > lastLikeMilestone.current) {
                     lastLikeMilestone.current = milestone;
                     addToQueue({ ...payload, likeCount: milestone });
+                } else if (requiresWidgetAck) {
+                    acknowledgeWidgetNotification(widgetNotificationId);
                 }
             }
             return;
@@ -614,11 +718,13 @@ export default function WidgetPage() {
         priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || "",
         executionDurationMs,
         isTest: data.isTest === true,
+        widgetNotificationId: typeof data.widgetNotificationId === 'string' ? data.widgetNotificationId : undefined,
     };
+    const requiresWidgetAck = Boolean(item.widgetNotificationId);
 
     const queue = notificationQueue.current;
     // MERGE GIFTS (Same User + Same Gift)
-    if (type === 'gift' && data.msgId) {
+    if (!requiresWidgetAck && type === 'gift' && data.msgId) {
         const existingIdx = queue.findIndex(q => q.type === 'gift' && q.username === data.username && q.msgId === data.msgId);
         if (existingIdx !== -1) {
             queue[existingIdx].repeatCount = data.repeatCount;
@@ -645,12 +751,12 @@ export default function WidgetPage() {
 
     // STRICT LIMITS (Anti-Memory Leak)
     if (priority === 2) {
-        if (queue.filter(q => q.priority === 2).length > 100) return; // Drop if > 100 gifts
+        if (!requiresWidgetAck && queue.filter(q => q.priority === 2).length > 100) return; // Drop if > 100 gifts
         let insertAt = 0;
         while (insertAt < queue.length && queue[insertAt].priority >= 2) insertAt++;
         queue.splice(insertAt, 0, item);
     } else {
-        if (queue.length > 150) return; // Drop non-gifts if queue too long
+        if (!requiresWidgetAck && queue.length > 150) return; // Drop non-gifts if queue too long
         queue.push(item);
     }
 
@@ -670,9 +776,6 @@ export default function WidgetPage() {
 
     processQueue();
   };
-
-  const interruptFlag = useRef(false);
-  const activeNotificationRef = useRef<NotificationItem | null>(null);
 
   const interruptIfLowPriority = () => {
     const current = activeNotificationRef.current;
@@ -722,6 +825,7 @@ export default function WidgetPage() {
 
     const item = notificationQueue.current.shift()!;
     if (!isTypeEnabled(item.type) && !item.isTest) {
+        acknowledgeWidgetNotification(item.widgetNotificationId);
         isProcessingQueue.current = false;
         processQueue();
         return;
@@ -804,6 +908,7 @@ export default function WidgetPage() {
 
     setNotifVisible(false);
     setTimeout(() => {
+        acknowledgeWidgetNotification(item.widgetNotificationId);
         setActiveNotification(null);
         activeNotificationRef.current = null;
         isProcessingQueue.current = false;

@@ -66,6 +66,8 @@ export async function POST(req: Request) {
     const commandId = await enqueueAdbActions(Array.isArray(actions) ? actions : [actions], {
       eventType: 'manual_test',
       rewardName,
+      widgetAckRequired: true,
+      widgetNotificationAck: false,
       widgetEvent: {
         type: 'gift',
         data: {

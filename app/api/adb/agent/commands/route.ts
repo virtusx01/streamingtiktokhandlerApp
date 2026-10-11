@@ -6,7 +6,7 @@ import { emitGiftEvent, emitLikeEvent } from '@/lib/events';
 
 export const runtime = 'nodejs';
 
-function emitCommandWidgetEvent(metadata: unknown) {
+function emitCommandWidgetEvent(metadata: unknown, notificationId: string) {
   if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return;
 
   const widgetEvent = (metadata as Record<string, unknown>).widgetEvent;
@@ -14,11 +14,12 @@ function emitCommandWidgetEvent(metadata: unknown) {
 
   const event = widgetEvent as Record<string, unknown>;
   if (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
+  const data = { ...(event.data as Record<string, unknown>), widgetNotificationId: notificationId };
 
   if (event.type === 'gift') {
-    emitGiftEvent(event.data);
+    emitGiftEvent(data);
   } else if (event.type === 'like') {
-    emitLikeEvent(event.data);
+    emitLikeEvent(data);
   }
 }
 
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Gagal menyimpan hasil aksi ADB.' }, { status: 500 });
     }
 
-    if (body.success) emitCommandWidgetEvent(updateResult.metadata);
+    if (body.success) emitCommandWidgetEvent(updateResult.metadata, body.commandId);
 
     return NextResponse.json({ success: true });
   } catch (error) {

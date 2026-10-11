@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents } from '@/lib/events';
 import { isAdminActionRequest } from '@/lib/adb-queue';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,6 +76,41 @@ export async function GET(req: Request) {
       unsubscribers.push(subscribeToFanEvents((data) => sendEvent('fan', data)));
       unsubscribers.push(subscribeToShareEvents((data) => sendEvent('share', data)));
       unsubscribers.push(subscribeToStatusEvents((data) => sendEvent('status', data)));
+
+      void (async () => {
+        try {
+          const pendingNotifications = await prisma.$queryRaw<Array<{
+            id: string;
+            type: string;
+            data: unknown;
+          }>>(Prisma.sql`
+            select
+              id::text as id,
+              metadata->'widgetEvent'->>'type' as type,
+              metadata->'widgetEvent'->'data' as data
+            from public.adb_commands
+            where status = 'completed'
+              and metadata @> '{"widgetAckRequired": true, "widgetNotificationAck": false}'::jsonb
+            order by completed_at asc
+          `);
+
+          for (const notification of pendingNotifications) {
+            if (
+              (notification.type === 'gift' || notification.type === 'like') &&
+              typeof notification.data === 'object' &&
+              notification.data !== null &&
+              !Array.isArray(notification.data)
+            ) {
+              sendEvent(notification.type, {
+                ...(notification.data as Record<string, unknown>),
+                widgetNotificationId: notification.id,
+              });
+            }
+          }
+        } catch (error) {
+          console.error('[SSE] Failed to replay pending ADB reward notifications:', error);
+        }
+      })();
 
       // Keep-alive heartbeat (10s for better browser persistence)
       keepAliveInterval = setInterval(() => {

@@ -74,10 +74,14 @@ notifikasi reward menunggu sampai aksi berhasil dilaporkan. Status `completed`
 berarti seluruh perintah ADB berhasil dijalankan oleh agent; bukan verifikasi
 visual bahwa aplikasi Android merespons aksi sesuai harapan.
 
-Perintah ADB tetap serial pada satu agent. Notifikasi di browser juga masuk
-queue serial. Jika dibutuhkan jaminan bahwa item kedua menunggu sampai tampilan
-notifikasi pertama selesai, diperlukan acknowledgment browser-ke-server dan
-gate pada pengambilan command berikutnya; durasi estimasi saja bukan jaminan.
+Command reward ADB membawa flag acknowledgment di metadata. Fungsi DB
+`claim_adb_command` menahan command selanjutnya selama ada notifikasi reward
+yang selesai aksi ADB-nya tetapi belum diakui widget. Widget mengirim
+acknowledgment setelah notifikasi selesai ditampilkan (termasuk transisi keluar);
+baru setelah server menyimpan acknowledgment agent dapat mengambil command
+berikutnya. Jika widget offline/reload saat notifikasi tertunda, `/api/events`
+memutar ulang notifikasi yang belum di-ack. Gagal mengirim acknowledgment akan
+dicoba ulang oleh widget dan menahan antrean ADB sampai berhasil.
 
 Widget menggambar notifikasi custom melalui elemen canvas yang dikonfigurasi.
 Jika tidak ada elemen yang cocok dengan tipe event, gunakan fallback notifikasi
@@ -176,8 +180,9 @@ proses in-memory dan listener bukan worker serverless yang tahan suspend.
   memutus sinkronisasi; multi-instance memerlukan pub/sub terdistribusi dan
   state tahan lama.
 - README dan catatan ini menjelaskan notifikasi reward dikirim setelah hasil
-  aksi ADB berhasil diterima server. Event SSE tetap bergantung pada emitter
-  proses Render yang sama.
+  aksi ADB berhasil diterima server, kemudian command berikutnya ditahan sampai
+  widget mengonfirmasi notifikasi selesai. Event SSE live tetap bergantung pada
+  emitter proses Render yang sama; replay pending menjembatani widget reconnect.
 - Untuk event/ADB, uji minimal: event biasa, duplicate event ID, event gift
   beruntun, aksi lebih dari satu, agent offline, aksi gagal, serta dua event
   berurutan. Tes Android nyata tetap diperlukan untuk memastikan izin dan aksi

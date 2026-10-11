@@ -176,6 +176,8 @@ async function processAggregatedGift(aggKey: string) {
           username: giftData.username,
           giftName: finalGiftName,
           repeatCount: totalCount,
+          widgetAckRequired: true,
+          widgetNotificationAck: false,
           widgetEvent: { type: 'gift', data: enrichedData },
         });
         notificationDeferredUntilAdbClaim = true;
