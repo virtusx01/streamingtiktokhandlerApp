@@ -156,7 +156,29 @@ export async function POST(req: Request) {
       globalHolder.__last_listener_error = '';
       globalHolder.__last_listener_log = '';
 
-      // Prefer the installed Python TikTok listener; ADB is only used separately for device actions.
+      const listenerEngine = (process.env.TIKTOK_LISTENER_ENGINE || 'nodejs').toLowerCase();
+      const shouldUsePython = listenerEngine === 'python';
+      const shouldUseNode = listenerEngine === 'nodejs' || listenerEngine === 'auto' || !shouldUsePython;
+
+      // Prefer the Node.js TikTok Live connector first. In practice it is usually more stable for
+      // room resolution and live checks than the Python client in this environment.
+      if (shouldUseNode) {
+        try {
+          await tiktokNodeListener.start(targetUsername);
+
+          return NextResponse.json({
+            message: 'Listener Node.js started',
+            engine: 'nodejs',
+            username: targetUsername,
+            status: listenerStatus
+          });
+        } catch (err: any) {
+          console.warn('[TikTokListener] Node.js listener failed, falling back to Python:', err.message);
+          globalHolder.__last_listener_error = err.message;
+        }
+      }
+
+      // Fallback to Python listener when Node.js is unavailable or explicitly selected.
       const pythonCmd = getPythonCommand();
       if (pythonCmd) {
         const scriptPath = path.join(process.cwd(), 'main.py');
@@ -215,35 +237,15 @@ export async function POST(req: Request) {
             status: initialStatus
           });
         } catch (pyErr: any) {
-          console.warn('[TikTokListener] Python spawn failed, falling back to Node.js listener:', pyErr?.message);
+          console.warn('[TikTokListener] Python spawn failed:', pyErr.message);
+          globalHolder.__last_listener_error = pyErr.message;
         }
       }
 
-      // Fallback: Pure Node.js TikTok Live listener
-      try {
-        await tiktokNodeListener.start(targetUsername);
-
-        return NextResponse.json({
-          message: 'Listener Node.js started',
-          engine: 'nodejs',
-          username: targetUsername,
-          status: listenerStatus
-        });
-      } catch (err: any) {
-        globalHolder.__last_listener_error = err.message;
-        updateListenerStatus({
-          running: false,
-          connected: false,
-          isLive: false,
-          statusText: `Gagal start: ${err.message}`
-        });
-        emitStatusEvent(listenerStatus);
-
-        return NextResponse.json(
-          { error: 'Gagal menjalankan listener: ' + err.message },
-          { status: 500 }
-        );
-      }
+      return NextResponse.json(
+        { error: 'Tidak ada listener TikTok yang bisa dijalankan.' },
+        { status: 500 }
+      );
     }
 
     if (action === 'stop') {

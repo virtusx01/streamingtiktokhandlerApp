@@ -53,6 +53,21 @@ def get_username_sync():
 TIKTOK_USERNAME = get_username_sync()
 BASE_URL = os.environ.get("NEXT_BASE_URL", "http://localhost:3005")
 LISTENER_TOKEN = os.environ.get("TIKTOK_LISTENER_TOKEN", "")
+TIKTOK_PROXY_URL = os.environ.get("TIKTOK_PROXY_URL") or os.environ.get("TIKTOK_WEB_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+TIKTOK_REQUEST_TIMEOUT = float(os.environ.get("TIKTOK_REQUEST_TIMEOUT", "12.0"))
+
+
+def get_web_proxy():
+    if not TIKTOK_PROXY_URL:
+        return None
+    try:
+        return httpx.Proxy(url=TIKTOK_PROXY_URL)
+    except Exception as exc:
+        print(f"⚠️ Invalid proxy URL '{TIKTOK_PROXY_URL}': {exc}", flush=True)
+        return None
+
+
+TIKTOK_WEB_PROXY = get_web_proxy()
 
 # Endpoints
 GIFT_EVENT_URL = f"{BASE_URL}/api/gift-event"
@@ -64,7 +79,7 @@ FAN_EVENT_URL = f"{BASE_URL}/api/fan-event"
 SHARE_EVENT_URL = f"{BASE_URL}/api/share-event"
 STATUS_REPORT_URL = f"{BASE_URL}/api/listener"
 
-http_client = httpx.AsyncClient(timeout=8.0)
+http_client = httpx.AsyncClient(timeout=TIKTOK_REQUEST_TIMEOUT)
 
 def safe_get(obj, attr, fallback=None):
     try:
@@ -75,7 +90,7 @@ def safe_get(obj, attr, fallback=None):
 async def safe_post(url, payload, event_type="Event"):
     try:
         headers = {"Authorization": f"Bearer {LISTENER_TOKEN}"} if LISTENER_TOKEN else {}
-        response = await http_client.post(url, json=payload, headers=headers, timeout=8.0)
+        response = await http_client.post(url, json=payload, headers=headers, timeout=TIKTOK_REQUEST_TIMEOUT)
         if not response.is_success:
             print(
                 f"⚠️ [API Warning] {event_type} rejected by backend "
@@ -124,7 +139,9 @@ def extract_images(event):
 
 def create_client(username: str) -> TikTokLiveClient:
     """Create a brand new client instance to avoid corrupted state across reconnects."""
-    client = TikTokLiveClient(unique_id=username)
+    if TIKTOK_WEB_PROXY:
+        print(f"🔐 TikTok proxy aktif: {TIKTOK_PROXY_URL}", flush=True)
+    client = TikTokLiveClient(unique_id=username, web_proxy=TIKTOK_WEB_PROXY)
 
     @client.on(ConnectEvent)
     async def on_connect(event: ConnectEvent):
