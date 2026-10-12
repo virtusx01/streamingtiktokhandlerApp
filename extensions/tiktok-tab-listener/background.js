@@ -25,6 +25,7 @@ function normalizeAppUrl(rawUrl) {
   if (!value) return 'https://tiktoklistener.onrender.com';
   return value
     .replace(/\/+$/, '')
+    .replace(/\/api\/tiktok-live\/event\/?$/, '')
     .replace(/\/widget\/callback\/?$/, '')
     .replace(/\/widget\/?$/, '')
     .replace(/\/callback\/?$/, '');
@@ -59,7 +60,7 @@ async function postBridge(action, extra = {}) {
         }
       };
 
-  const response = await fetch(appUrl + '/widget/callback', {
+  const response = await fetch(appUrl + '/api/tiktok-live/event', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + listenerToken,
