@@ -778,99 +778,122 @@ export default function WidgetPage() {
   // ==========================================
   const addToQueue = (evtData: Record<string, unknown> | { type?: string; data?: Record<string, unknown> }) => {
     const currentConfig = configRef.current;
-    const type = typeof evtData.type === 'string' ? evtData.type : 'gift';
-    const data = 'data' in evtData && evtData.data && typeof evtData.data === 'object' ? (evtData.data as Record<string, unknown>) : (evtData as Record<string, unknown>);
+    const rawData = 'data' in evtData && evtData.data && typeof evtData.data === 'object' ? (evtData.data as Record<string, unknown>) : (evtData as Record<string, unknown>);
+    const pickString = (key: string, fallback = "") => {
+      const value = rawData[key];
+      if (typeof value === 'string') return value;
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      return fallback;
+    };
+    const pickNumber = (key: string, fallback = 0) => {
+      const value = rawData[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const pickBoolean = (key: string, fallback = false) => {
+      const value = rawData[key];
+      if (typeof value === 'boolean') return value;
+      return fallback;
+    };
+    const eventTypeValue = typeof evtData.type === 'string' ? evtData.type : 'gift';
+    const type: NotificationItem['type'] = eventTypeValue === 'gift' || eventTypeValue === 'comment' || eventTypeValue === 'like' || eventTypeValue === 'join' || eventTypeValue === 'follow' || eventTypeValue === 'fan' || eventTypeValue === 'share' ? eventTypeValue : 'gift';
+
+    const nickname = pickString('nickname', pickString('username', 'Viewer'));
+    const username = pickString('username', 'Viewer');
+    const giftName = pickString('giftName', pickString('namaHadiah', 'Hadiah'));
+    const namaHadiah = pickString('namaHadiah', giftName);
+    const repeatCount = pickNumber('repeatCount', 1);
+    const likeCount = pickNumber('likeCount', 0);
+    const msgId = pickString('msgId');
+    const widgetNotificationId = pickString('widgetNotificationId');
+    const rawComment = pickString('comment', '');
+    const triggerRewardsEnabled = pickBoolean('triggerRewardsEnabled', true);
+    const isTest = pickBoolean('isTest', false);
+    const repeatEnd = rawData.repeatEnd === undefined ? true : Boolean(rawData.repeatEnd);
+    const giftIcon = pickString('giftIcon');
+    const adbActions = Array.isArray(rawData.actions) ? rawData.actions as Array<Record<string, unknown>> : [];
 
     let voiceMessage = "";
     let priority = 0;
     let voiceModel = currentConfig.commentVoice;
 
     if (type === 'comment') {
-        voiceMessage = currentConfig.commentVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer").replace(/{comment}/g, data.comment || "");
+        voiceMessage = currentConfig.commentVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{comment}/g, rawComment);
         priority = 0;
     } else if (type === 'like') {
-        voiceMessage = currentConfig.likeVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer").replace(/{likecount}/g, String(data.likeCount || 0));
+        voiceMessage = currentConfig.likeVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{likecount}/g, String(likeCount));
         priority = 1;
         voiceModel = currentConfig.likeVoice;
     } else if (type === 'join') {
-        voiceMessage = currentConfig.joinVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer");
+        voiceMessage = currentConfig.joinVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 0;
     } else if (type === 'follow') {
-        voiceMessage = currentConfig.followVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer");
+        voiceMessage = currentConfig.followVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 0;
         voiceModel = currentConfig.followVoice;
     } else if (type === 'fan') {
-        voiceMessage = currentConfig.fanVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer");
+        voiceMessage = currentConfig.fanVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 1;
         voiceModel = currentConfig.fanVoice;
     } else if (type === 'share') {
-        voiceMessage = currentConfig.shareVoiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer");
+        voiceMessage = currentConfig.shareVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 1;
         voiceModel = currentConfig.shareVoice;
     } else {
-        voiceMessage = currentConfig.voiceOverTemplate.replace(/{nickname}/g, data.nickname || "Viewer").replace(/{username}/g, data.username || "Viewer").replace(/{giftname}/g, data.namaHadiah || data.giftName || "Hadiah").replace(/{repeatcount}/g, String(data.repeatCount || 1));
+        voiceMessage = currentConfig.voiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{giftname}/g, namaHadiah).replace(/{repeatcount}/g, String(repeatCount));
         priority = 2;
         voiceModel = currentConfig.giftVoice;
     }
 
-    const adbActions = Array.isArray(data.actions) ? (data.actions as Array<Record<string, unknown>>) : [];
     const executionDurationMs = adbActions.reduce((sum: number, action: Record<string, unknown>) => {
-        const delay = Number((action as Record<string, unknown>).delayAfter ?? 0) || 0;
-        const typeName = String((action as Record<string, unknown>).type ?? '');
-        const swipeInner = (action as Record<string, unknown>).swipe as Record<string, unknown> | undefined;
+        const delay = Number(action.delayAfter ?? 0) || 0;
+        const typeName = String(action.type ?? '');
+        const swipeInner = action.swipe as Record<string, unknown> | undefined;
         if (typeName === 'swipe') return sum + (Math.max(300, Number(swipeInner?.duration ?? 0) || 0) + delay);
         if (typeName === 'click' || typeName === 'keyevent' || typeName === 'text') return sum + 250 + delay;
         return sum + 300 + delay;
     }, 0) || 1200;
 
     const item: NotificationItem = {
-        id: Math.random().toString(36).substr(2, 9), type, giftName: data.giftName || "", namaHadiah: data.namaHadiah || data.giftName || "Hadiah",
-        nickname: data.nickname || data.username || "Viewer", username: data.username || "Viewer", message: voiceMessage,
-        likeCount: data.likeCount, repeatCount: data.repeatCount || 1, repeatEnd: data.repeatEnd ?? true, msgId: data.msgId, giftIcon: data.giftIcon,
-        adbData: (type === 'gift' || type === 'like') ? data.actions : null,
-        priority, triggerRewardsEnabled: data.triggerRewardsEnabled ?? true, rawComment: data.comment || "",
+        id: Math.random().toString(36).substr(2, 9), type, giftName, namaHadiah,
+        nickname, username, message: voiceMessage,
+        likeCount, repeatCount, repeatEnd, msgId: msgId || undefined, giftIcon: giftIcon || undefined,
+        adbData: (type === 'gift' || type === 'like') ? (rawData.actions as NotificationItem['adbData']) : null,
+        priority, triggerRewardsEnabled: triggerRewardsEnabled, rawComment,
         executionDurationMs,
-        isTest: data.isTest === true,
-        widgetNotificationId: typeof data.widgetNotificationId === 'string' ? data.widgetNotificationId : undefined,
+        isTest,
+        widgetNotificationId: widgetNotificationId || undefined,
     };
     const requiresWidgetAck = Boolean(item.widgetNotificationId);
 
     const queue = notificationQueue.current;
     // MERGE GIFTS (Same User + Same Gift)
     // Prevent duplicate gift events when msgId is missing by using a short-lived composite key.
-    if (!requiresWidgetAck && type === 'gift' && !data.msgId) {
-        const key = `${data.username || data.nickname || 'anon'}::${data.giftName || data.namaHadiah || 'gift'}::${Math.floor((Number(data.timestamp || Date.now()))/5000)}`;
-        if (recentGiftKeys.current.has(key)) {
-            // Duplicate within short window — drop
-            return;
-        }
+    if (!requiresWidgetAck && type === 'gift' && !msgId) {
+        const key = `${username}::${giftName}::${Math.floor((Number(rawData.timestamp ?? Date.now()) / 5000))}`;
+        if (recentGiftKeys.current.has(key)) return;
         recentGiftKeys.current.add(key);
         setTimeout(() => recentGiftKeys.current.delete(key), 5000);
     }
 
-    if (!requiresWidgetAck && type === 'gift' && data.msgId) {
-        const existingIdx = queue.findIndex(q => q.type === 'gift' && q.username === data.username && q.msgId === data.msgId);
+    if (!requiresWidgetAck && type === 'gift' && msgId) {
+        const existingIdx = queue.findIndex(q => q.type === 'gift' && q.username === username && q.msgId === msgId);
         if (existingIdx !== -1) {
-            queue[existingIdx].repeatCount = data.repeatCount;
-            queue[existingIdx].repeatEnd = data.repeatEnd;
+            queue[existingIdx].repeatCount = repeatCount;
+            queue[existingIdx].repeatEnd = repeatEnd;
             return;
         }
         const current = activeNotificationRef.current;
-        if (current && current.type === 'gift' && current.username === data.username && current.msgId === data.msgId) {
-            setActiveNotification(prev => prev ? { ...prev, repeatCount: data.repeatCount } : null);
-            activeNotificationRef.current!.repeatCount = data.repeatCount;
+        if (current && current.type === 'gift' && current.username === username && current.msgId === msgId) {
+            setActiveNotification(prev => prev ? { ...prev, repeatCount } : null);
+            activeNotificationRef.current!.repeatCount = repeatCount;
             return;
         }
 
-        // If not in queue or active, check if we already processed this combo recently
-        if (completedCombosRef.current.has(data.msgId)) {
-            // It's a late update for a combo we already finished displaying. Drop it to prevent duplicate notifications.
-            return;
-        }
-        
-        // New combo, track it so we don't duplicate later
-        completedCombosRef.current.add(data.msgId);
-        setTimeout(() => completedCombosRef.current.delete(data.msgId), 60000); // 1 minute memory
+        if (completedCombosRef.current.has(msgId)) return;
+        completedCombosRef.current.add(msgId);
+        setTimeout(() => completedCombosRef.current.delete(msgId), 60000);
     }
 
     // STRICT LIMITS (Anti-Memory Leak)
@@ -1223,10 +1246,17 @@ export default function WidgetPage() {
     </div>
   );
 
-  const selectedElement = elements.find(el => el.id === selectedId);
-  const hasConfiguredEventElement = Boolean(activeNotification && elements.some(el =>
+  const effectiveElements = elements.length > 0 ? elements : createDefaultWidgetElements();
+  const selectedElement = effectiveElements.find(el => el.id === selectedId);
+  const hasConfiguredEventElement = Boolean(activeNotification && effectiveElements.some(el =>
     !el.eventTypes || el.eventTypes.includes(activeNotification.type)
   ));
+  const showActiveEventElement = (el: Element) => {
+    if (showEditor) return true;
+    if (!activeNotification) return true;
+    if (!isTypeEnabled(activeNotification.type) && !activeNotification.isTest) return false;
+    return !el.eventTypes || el.eventTypes.includes(activeNotification.type);
+  };
 
   return (
     <div className={`fixed inset-0 font-sans transition-colors duration-500 ${isGreenScreen ? "bg-[#00ff00]" : "bg-transparent"}`}>
@@ -1290,9 +1320,9 @@ export default function WidgetPage() {
 
 
       <div ref={canvasRef} className="w-full h-full relative" onClick={() => showEditor && setSelectedId(null)}>
-        {elements.map(el => {
+        {effectiveElements.map(el => {
              const state = getElementState(el, activeNotification?.type || settingsTab);
-             const isVisible = showEditor || (!activeNotification ? true : (isTypeEnabled(activeNotification.type) || activeNotification.isTest) && (!el.eventTypes || el.eventTypes.includes(activeNotification.type)));
+             const isVisible = showActiveEventElement(el);
              return (
               <div key={el.id} onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, el.id, "move"); }} style={{ left: state.x, top: state.y, width: state.width, height: state.height, position: 'absolute', zIndex: 10, outline: (showEditor && selectedId === el.id) ? '2px solid #10b981' : 'none', opacity: isVisible ? 1 : 0, transition: 'opacity 0.4s ease-in-out' }}>
                 {el.type === "text" ? (
