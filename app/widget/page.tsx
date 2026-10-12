@@ -332,88 +332,6 @@ export default function WidgetPage() {
 
   const fonts = ["Baloo 2", "Open Sans", "Inter", "Roboto", "Passion One"];
 
-  const createDefaultWidgetElements = (): Element[] => [
-    {
-      id: "brand-glow-card",
-      type: "image",
-      x: 18,
-      y: 18,
-      width: 146,
-      height: 90,
-      content: "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=400&q=80",
-      style: {
-        objectFit: "cover",
-      },
-      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
-    },
-    {
-      id: "default-gift-image",
-      type: "image",
-      x: 28,
-      y: 28,
-      width: 78,
-      height: 78,
-      content: "https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Rose.png",
-      style: {
-        objectFit: "contain",
-      },
-      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
-    },
-    {
-      id: "default-event-text",
-      type: "text",
-      x: 146,
-      y: 24,
-      width: 760,
-      height: 76,
-      content: "{nickname}",
-      style: {
-        color: "#ffffff",
-        fontSize: 29,
-        fontWeight: "800",
-        fontStyle: "normal",
-        fontFamily: "Baloo 2",
-        textAlign: "left",
-        strokeColor: "#000000",
-        strokeWidth: 3,
-      },
-      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
-    },
-    {
-      id: "default-event-subtext",
-      type: "text",
-      x: 148,
-      y: 70,
-      width: 760,
-      height: 30,
-      content: "{giftname}{comment}{likecount}",
-      style: {
-        color: "#d9f99d",
-        fontSize: 18,
-        fontWeight: "700",
-        fontStyle: "normal",
-        fontFamily: "Inter",
-        textAlign: "left",
-        strokeColor: "#000000",
-        strokeWidth: 2,
-      },
-      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
-    },
-  ];
-
-  const resolveSavedElements = useCallback((candidate?: unknown) => {
-    if (Array.isArray(candidate) && candidate.length > 0) return candidate as Element[];
-    return createDefaultWidgetElements();
-  }, []);
-
-  const ensureDefaultWidgetLayout = useCallback((nextElements?: Element[]) => {
-    setElements(prev => {
-      if (prev.length > 0) return prev;
-      if (Array.isArray(nextElements) && nextElements.length > 0) return nextElements;
-      return createDefaultWidgetElements();
-    });
-  }, [resolveSavedElements]);
-
   // ==========================================
   // WATCHDOG TIMER (Auto-Recovery)
   // ==========================================
@@ -427,6 +345,7 @@ export default function WidgetPage() {
                 isProcessingQueue.current = false;
                 setNotifVisible(false);
                 setActiveNotification(null);
+                activeNotificationRef.current = null;
                 setTimeout(() => acknowledgeWidgetNotification(notificationId), 400);
                 processQueue();
             }
@@ -614,6 +533,8 @@ export default function WidgetPage() {
     };
     };
 
+    connectSSE();
+
     return () => {
         try { if (sseConnection.current) { sseConnection.current.close(); sseConnection.current = null; } } catch (e) {}
         if (typeof reconnectTimer !== 'undefined' && reconnectTimer) clearTimeout(reconnectTimer);
@@ -624,25 +545,24 @@ export default function WidgetPage() {
   // CONFIG PERSISTENCE
   // ==========================================
   const loadConfig = async () => {
+    let locallySavedElements = elementsRef.current;
     try {
       const localData = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (localData) {
         const parsed = JSON.parse(localData);
         if (parsed.config) setConfig(prev => ({ ...DEFAULT_CONFIG, ...parsed.config }));
-        if (parsed.elements && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+        if (Array.isArray(parsed.elements)) {
+          locallySavedElements = parsed.elements;
           setElements(parsed.elements);
-        } else {
-          setElements(createDefaultWidgetElements());
         }
-      } else {
-        setElements(createDefaultWidgetElements());
       }
     } catch (e) {
-      setElements(createDefaultWidgetElements());
+      console.error("[Widget] Failed to load local widget configuration:", e);
     }
 
     try {
       const res = await fetch("/api/config");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.widgetConfig) {
         const serverConfig: WidgetConfig = {
@@ -703,18 +623,18 @@ export default function WidgetPage() {
           triggerRewardsEnabled: data.triggerRewardsEnabled ?? DEFAULT_CONFIG.triggerRewardsEnabled,
         };
         setConfig(serverConfig);
-        if (Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0) {
-          setElements(data.widgetConfig.elements);
-        } else {
-          const starterLayout = createDefaultWidgetElements();
-          setElements(starterLayout);
-        }
+        const savedElements = Array.isArray(data.widgetConfig?.elements)
+          ? data.widgetConfig.elements
+          : locallySavedElements;
+        setElements(savedElements);
         if (data.rewards) {
           // no-op: rewards payload is intentionally ignored for the visible widget rendering path
         }
-        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : createDefaultWidgetElements());
+        saveToLocalStorage(serverConfig, savedElements);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error("[Widget] Failed to load server widget configuration:", err);
+    }
   };
 
   const saveToLocalStorage = (cfg: WidgetConfig, els: Element[]) => {
@@ -1246,14 +1166,14 @@ export default function WidgetPage() {
     </div>
   );
 
-  const effectiveElements = elements.length > 0 ? elements : createDefaultWidgetElements();
-  const selectedElement = effectiveElements.find(el => el.id === selectedId);
-  const hasConfiguredEventElement = Boolean(activeNotification && effectiveElements.some(el =>
-    !el.eventTypes || el.eventTypes.includes(activeNotification.type)
-  ));
+  const selectedElement = elements.find(el => el.id === selectedId);
+  const hasDynamicTemplate = (el: Element) =>
+    el.type === "text" && /\{(?:nickname|username|giftname|likecount|comment|repeatcount)\}/i.test(getElementState(el).content);
   const showActiveEventElement = (el: Element) => {
     if (showEditor) return true;
-    if (!activeNotification) return true;
+    if (!activeNotification || !notifVisible) {
+      return (!el.eventTypes || el.eventTypes.length === 0) && !hasDynamicTemplate(el);
+    }
     if (!isTypeEnabled(activeNotification.type) && !activeNotification.isTest) return false;
     return !el.eventTypes || el.eventTypes.includes(activeNotification.type);
   };
@@ -1320,7 +1240,7 @@ export default function WidgetPage() {
 
 
       <div ref={canvasRef} className="w-full h-full relative" onClick={() => showEditor && setSelectedId(null)}>
-        {effectiveElements.map(el => {
+        {elements.map(el => {
              const state = getElementState(el, activeNotification?.type || settingsTab);
              const isVisible = showActiveEventElement(el);
              return (
@@ -1328,13 +1248,12 @@ export default function WidgetPage() {
                 {el.type === "text" ? (
                     <div style={{ ...el.style, width: '100%', height: '100%', display: 'flex', alignItems: state.verticalAlign === 'top' ? 'flex-start' : state.verticalAlign === 'bottom' ? 'flex-end' : 'center', justifyContent: state.textAlign === 'left' ? 'flex-start' : state.textAlign === 'right' ? 'flex-end' : 'center', textAlign: state.textAlign as "left" | "center" | "right" | undefined, WebkitTextStroke: (el.style?.strokeWidth) ? `${el.style.strokeWidth}px ${el.style.strokeColor || '#000000'}` : undefined, paintOrder: 'stroke fill' }}>
                         {(() => {
-                            const type = activeNotification?.type || settingsTab;
                             let t = state.content;
                             if (activeNotification) {
                                 t = activeNotification.type === 'gift' ? config.onScreenGiftTemplate : activeNotification.type === 'comment' ? config.onScreenCommentTemplate : activeNotification.type === 'like' ? config.onScreenLikeTemplate : activeNotification.type === 'join' ? config.onScreenJoinTemplate : activeNotification.type === 'follow' ? config.onScreenFollowTemplate : activeNotification.type === 'fan' ? config.onScreenFanTemplate : activeNotification.type === 'share' ? config.onScreenShareTemplate : state.content;
                                 return t.replace(/{nickname}/g, activeNotification.nickname).replace(/{username}/g, activeNotification.username).replace(/{giftname}/g, activeNotification.namaHadiah || "").replace(/{likecount}/g, String(activeNotification.likeCount || "")).replace(/{comment}/g, activeNotification.rawComment || "").replace(/{repeatcount}/g, String(activeNotification.repeatCount || 1));
                             }
-                            return t.replace(/{nickname}/g, "User").replace(/{giftname}/g, "Gift").replace(/{repeatcount}/g, "1");
+                            return t;
                         })()}
                     </div>
                 ) : (
