@@ -32,17 +32,35 @@ async function postBridge(action, extra = {}) {
   const { appUrl, listenerToken } = await getSettings();
   if (!listenerToken) throw new Error('Isi TIKTOK_LISTENER_TOKEN pada pengaturan extension.');
 
-  const response = await fetch(`${appUrl}/api/browser-listener`, {
+  const payload = action === 'frames'
+    ? {
+        type: 'frames',
+        data: {
+          username: activeUsername,
+          frames: Array.isArray(extra.frames) ? extra.frames : []
+        }
+      }
+    : {
+        type: 'status',
+        data: {
+          action,
+          username: activeUsername,
+          ...extra
+        }
+      };
+
+  const response = await fetch(appUrl + '/widget/callback', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${listenerToken}`,
+      'Authorization': 'Bearer ' + listenerToken,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ action, username: activeUsername, ...extra })
+    body: JSON.stringify(payload)
   });
+
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(result.error || `Server menolak permintaan (${response.status}).`);
+    throw new Error(result.error || 'Server menolak permintaan (' + response.status + ').');
   }
   return response.json();
 }
@@ -52,7 +70,7 @@ function flushFrames() {
   if (!frameQueue.length || !activeUsername) return;
   const frames = frameQueue.splice(0, MAX_BATCH_SIZE);
   void postBridge('frames', { frames }).catch((error) => {
-    console.warn('[TikTok Tab Listener] Gagal meneruskan frame:', error.message);
+    console.warn('[TikTok Tab Listener] Gagal meneruskan frame ke callback widget:', error.message);
   });
   if (frameQueue.length) scheduleFlush();
 }
@@ -153,7 +171,7 @@ async function ensureCurrentTabListener() {
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId !== activeTabId) return;
-  void stopListener(`Tab TikTok terlepas dari debugger (${reason}).`);
+  void stopListener('Tab TikTok terlepas dari debugger (' + reason + ').');
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {

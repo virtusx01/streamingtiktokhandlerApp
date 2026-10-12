@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { emitGiftEvent, emitCommentEvent, emitLikeEvent, emitJoinEvent, emitFollowEvent, emitFanEvent, emitShareEvent, emitStatusEvent } from '@/lib/events';
+import { isAuthorizedTikTokListener } from '@/lib/listener-auth';
+import { POST as handleBrowserListener } from '@/app/api/browser-listener/route';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 const ALLOWED_TYPES = new Set(['gift','comment','like','join','follow','fan','share','status']);
 
@@ -11,30 +13,45 @@ export async function OPTIONS(req: NextRequest) {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     },
   });
 }
 
 export async function POST(req: NextRequest) {
   try {
+    if (!isAuthorizedTikTokListener(req)) {
+      return NextResponse.json({ error: 'Token listener tidak valid.' }, { status: 401 });
+    }
+
     const body = await req.json().catch(() => null);
     if (!body) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    // Accept either { type: 'gift', data: { ... } } or a raw payload with 'type' at root
-    const type = (typeof body.type === 'string' ? body.type.toLowerCase() : (typeof body.event === 'string' ? body.event.toLowerCase() : null));
+    const rawType = typeof body.type === 'string' ? body.type : (typeof body.event === 'string' ? body.event : null);
+    const type = rawType ? rawType.toLowerCase() : null;
     const data = body.data ?? (body.payload ?? body);
+
+    if (type === 'frames' || data?.frames) {
+      const frames = Array.isArray(data?.frames) ? data.frames : Array.isArray(body.frames) ? body.frames : [];
+      const username = typeof data?.username === 'string' ? data.username : (typeof body.username === 'string' ? body.username : '');
+      const forwarded = new Request(new URL(req.url), {
+        method: 'POST',
+        headers: {
+          authorization: req.headers.get('authorization') || '',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ action: 'frames', username, frames })
+      });
+      return handleBrowserListener(forwarded);
+    }
 
     if (!type || !ALLOWED_TYPES.has(type)) {
       return NextResponse.json({ error: 'Unsupported or missing type' }, { status: 400 });
     }
 
-    // Basic hygiene: ensure data is an object
     const payload = typeof data === 'object' && data !== null ? data : { raw: data };
-
-    // Attach received-at timestamp for traceability
     (payload as any).__callbackReceivedAt = Date.now();
 
     switch (type) {
