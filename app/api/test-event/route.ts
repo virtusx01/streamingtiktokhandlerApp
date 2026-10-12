@@ -3,8 +3,9 @@ import { emitGiftEvent, emitCommentEvent, emitFollowEvent, emitFanEvent, emitLik
 
 export async function POST(req: Request) {
   try {
-    const { type, giftName, comment } = await req.json();
-    
+    const body = await req.json();
+    const { type, giftName, comment, isMilestone } = body || {};
+
     if (type === 'comment') {
       const isSticker = comment === "sticker";
       const testComment = {
@@ -31,8 +32,8 @@ export async function POST(req: Request) {
         timestamp: Date.now()
       });
     } else if (type === 'like') {
-      const isMilestone = req.url.includes('milestone=true') || !!(await req.clone().json().catch(() => ({}))).isMilestone;
-      console.log(`[Test] Emitting test like ${isMilestone ? '(MILESTONE)' : ''}`);
+      const milestoneFlag = req.url.includes('milestone=true') || Boolean(isMilestone);
+      console.log(`[Test] Emitting test like ${milestoneFlag ? '(MILESTONE)' : ''}`);
       emitLikeEvent({
         type: 'like',
         nickname: "Likers",
@@ -41,8 +42,8 @@ export async function POST(req: Request) {
         totalLikeCount: isMilestone ? 1000 : 1500,
         timestamp: Date.now(),
         isTest: true,
-        isMilestone: isMilestone,
-        actions: isMilestone ? [
+        isMilestone: milestoneFlag,
+        actions: milestoneFlag ? [
             { type: 'click', x: 500, y: 500, delayAfter: 500 }
         ] : []
       });

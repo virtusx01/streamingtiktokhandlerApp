@@ -6,9 +6,47 @@ import { createHash } from "crypto";
 const TTS_SERVER_URL = "http://127.0.0.1:5002";
 const CACHE_DIR = path.join(process.cwd(), "cache", "tts");
 
-// Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+function createSilentWavBuffer(durationMs = 120): Buffer {
+  const sampleRate = 22050;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const sampleCount = Math.max(1, Math.floor((sampleRate * durationMs) / 1000));
+  const dataSize = sampleCount * blockAlign;
+  const totalSize = 36 + dataSize;
+  const buffer = Buffer.alloc(44 + dataSize);
+
+  buffer.write("RIFF", 0, "ascii");
+  buffer.writeUInt32LE(totalSize, 4);
+  buffer.write("WAVE", 8, "ascii");
+  buffer.write("fmt ", 12, "ascii");
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(channels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(byteRate, 28);
+  buffer.writeUInt16LE(blockAlign, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  buffer.write("data", 36, "ascii");
+  buffer.writeUInt32LE(dataSize, 40);
+
+  return buffer;
+}
+
+function buildSilentAudioResponse() {
+  const silentWav = createSilentWavBuffer(120);
+  return new NextResponse(new Uint8Array(silentWav), {
+    headers: {
+      "Content-Type": "audio/wav",
+      "Content-Length": silentWav.length.toString(),
+      "X-Cache": "OFFLINE-SILENT"
+    }
+  });
 }
 
 export async function GET(req: NextRequest): Promise<Response> {
@@ -21,14 +59,12 @@ export async function GET(req: NextRequest): Promise<Response> {
     return NextResponse.json({ error: "Text is required" }, { status: 400 });
   }
 
-  // Generate cache key based on text, voice and speed
   const cacheKey = createHash("md5")
     .update(`${text}_${voice}_${speed}`)
     .digest("hex");
-  
+
   const cacheFile = path.join(CACHE_DIR, `${cacheKey}.wav`);
 
-  // 1. Check Cache
   if (fs.existsSync(cacheFile)) {
     const fileBuffer = fs.readFileSync(cacheFile);
     return new NextResponse(fileBuffer, {
@@ -40,19 +76,15 @@ export async function GET(req: NextRequest): Promise<Response> {
     });
   }
 
-  // 2. Not in Cache, Request from Persistent Server
   try {
     const url = `${TTS_SERVER_URL}/?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}&speed=${speed}&output=${encodeURIComponent(cacheFile)}`;
-    
-    // We expect the server to write the file directly to cacheFile
     const response = await fetch(url);
     if (!response.ok) {
-        throw new Error(`TTS Server error: ${response.statusText}`);
+      throw new Error(`TTS Server error: ${response.statusText}`);
     }
 
-    // Wait a brief moment for filesystem to sync if needed, though write is finished on server side
     if (!fs.existsSync(cacheFile)) {
-        throw new Error("TTS Server reported success but file is missing");
+      throw new Error("TTS Server reported success but file is missing");
     }
 
     const fileBuffer = fs.readFileSync(cacheFile);
@@ -63,12 +95,8 @@ export async function GET(req: NextRequest): Promise<Response> {
         "X-Cache": "MISS"
       },
     });
-
   } catch (err: any) {
-    console.error(`[TTS_API] Failed: ${err.message}`);
-    return NextResponse.json({ 
-        error: "TTS Generation failed", 
-        details: err.message 
-    }, { status: 500 });
+    console.warn(`[TTS_API] TTS server unavailable or failed: ${err.message}. Falling back to silent audio.`);
+    return buildSilentAudioResponse();
   }
 }
