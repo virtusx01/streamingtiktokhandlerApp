@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Type, Image as ImageIcon, RotateCcw, RotateCw, X, Save, Volume2, MessageSquare, Mic2, Upload, Zap, Eye, EyeOff, Trash2, Play, Heart, Gift, Crown, UserPlus, Settings } from "lucide-react";
+import { Type, Image as ImageIcon, RotateCcw, RotateCw, X, Volume2, MessageSquare, Mic2, Upload, Zap, Eye, EyeOff, Trash2, Play, Heart, Gift, Crown, UserPlus, Settings } from "lucide-react";
 
 interface Element {
   id: string;
@@ -67,7 +67,7 @@ interface NotificationItem {
     repeatEnd?: boolean;
     msgId?: string;
     giftIcon?: string;
-    adbData?: any;
+    adbData?: Record<string, unknown> | unknown[] | string | number | boolean | null;
     priority: number; // 0=low (comment, join), 1=medium (like), 2=high (gift)
     prefetchedAudioUrl?: string;
     triggerRewardsEnabled?: boolean;
@@ -285,7 +285,6 @@ export default function WidgetPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<"gift" | "comment" | "like" | "join" | "follow" | "fan" | "share">("gift");
-  const [rewards, setRewards] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [referenceTab, setReferenceTab] = useState<string | null>(null);
   const [showGuides, setShowGuides] = useState(false);
@@ -335,12 +334,25 @@ export default function WidgetPage() {
 
   const createDefaultWidgetElements = (): Element[] => [
     {
+      id: "brand-glow-card",
+      type: "image",
+      x: 18,
+      y: 18,
+      width: 146,
+      height: 90,
+      content: "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=400&q=80",
+      style: {
+        objectFit: "cover",
+      },
+      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
+    },
+    {
       id: "default-gift-image",
       type: "image",
-      x: 24,
-      y: 18,
-      width: 76,
-      height: 76,
+      x: 28,
+      y: 28,
+      width: 78,
+      height: 78,
       content: "https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Rose.png",
       style: {
         objectFit: "contain",
@@ -350,14 +362,34 @@ export default function WidgetPage() {
     {
       id: "default-event-text",
       type: "text",
-      x: 120,
-      y: 20,
+      x: 146,
+      y: 24,
       width: 760,
-      height: 80,
-      content: "{nickname} {giftname}",
+      height: 76,
+      content: "{nickname}",
       style: {
         color: "#ffffff",
-        fontSize: 26,
+        fontSize: 29,
+        fontWeight: "800",
+        fontStyle: "normal",
+        fontFamily: "Baloo 2",
+        textAlign: "left",
+        strokeColor: "#000000",
+        strokeWidth: 3,
+      },
+      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
+    },
+    {
+      id: "default-event-subtext",
+      type: "text",
+      x: 148,
+      y: 70,
+      width: 760,
+      height: 30,
+      content: "{giftname}{comment}{likecount}",
+      style: {
+        color: "#d9f99d",
+        fontSize: 18,
         fontWeight: "700",
         fontStyle: "normal",
         fontFamily: "Inter",
@@ -371,16 +403,14 @@ export default function WidgetPage() {
 
   const resolveSavedElements = useCallback((candidate?: unknown) => {
     if (Array.isArray(candidate) && candidate.length > 0) return candidate as Element[];
-    // Do not auto-inject a default layout. Respect explicit saved/custom elements only.
-    return [] as Element[];
+    return createDefaultWidgetElements();
   }, []);
 
   const ensureDefaultWidgetLayout = useCallback((nextElements?: Element[]) => {
     setElements(prev => {
-      // Do not insert defaults automatically. If previous elements exist, keep them; otherwise, set to explicit nextElements or empty.
       if (prev.length > 0) return prev;
       if (Array.isArray(nextElements) && nextElements.length > 0) return nextElements;
-      return [] as Element[];
+      return createDefaultWidgetElements();
     });
   }, [resolveSavedElements]);
 
@@ -416,7 +446,9 @@ export default function WidgetPage() {
   useEffect(() => {
     const tryUnlock = async () => {
       if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtor) return;
+        audioContextRef.current = new AudioCtor();
       }
       
       const ctx = audioContextRef.current;
@@ -600,15 +632,13 @@ export default function WidgetPage() {
         if (parsed.elements && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
           setElements(parsed.elements);
         } else {
-          // Do not auto-insert a default layout when no saved elements are present.
-          setElements([]);
+          setElements(createDefaultWidgetElements());
         }
       } else {
-        // Respect explicit customization: start with no elements unless configured.
-        setElements([]);
+        setElements(createDefaultWidgetElements());
       }
     } catch (e) {
-      setElements([]);
+      setElements(createDefaultWidgetElements());
     }
 
     try {
@@ -676,11 +706,13 @@ export default function WidgetPage() {
         if (Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0) {
           setElements(data.widgetConfig.elements);
         } else {
-          // Do not insert default layout when server doesn't provide elements.
-          setElements([]);
+          const starterLayout = createDefaultWidgetElements();
+          setElements(starterLayout);
         }
-        if (data.rewards) setRewards(data.rewards);
-        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : []);
+        if (data.rewards) {
+          // no-op: rewards payload is intentionally ignored for the visible widget rendering path
+        }
+        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : createDefaultWidgetElements());
       }
     } catch (err) {}
   };
@@ -744,10 +776,10 @@ export default function WidgetPage() {
   // ==========================================
   // NOTIFICATION QUEUE SYSTEM (PRIORITY & EXTREME LOAD)
   // ==========================================
-  const addToQueue = (evtData: any) => {
+  const addToQueue = (evtData: Record<string, unknown> | { type?: string; data?: Record<string, unknown> }) => {
     const currentConfig = configRef.current;
-    const type = evtData.type || 'gift';
-    const data = evtData.data || evtData;
+    const type = typeof evtData.type === 'string' ? evtData.type : 'gift';
+    const data = 'data' in evtData && evtData.data && typeof evtData.data === 'object' ? (evtData.data as Record<string, unknown>) : (evtData as Record<string, unknown>);
 
     let voiceMessage = "";
     let priority = 0;
@@ -781,11 +813,13 @@ export default function WidgetPage() {
         voiceModel = currentConfig.giftVoice;
     }
 
-    const adbActions = Array.isArray(data.actions) ? data.actions : [];
-    const executionDurationMs = adbActions.reduce((sum: number, action: any) => {
-        const delay = Number(action?.delayAfter ?? 0) || 0;
-        if (action?.type === 'swipe') return sum + (Math.max(300, Number(action.swipe?.duration ?? 0) || 0) + delay);
-        if (action?.type === 'click' || action?.type === 'keyevent' || action?.type === 'text') return sum + 250 + delay;
+    const adbActions = Array.isArray(data.actions) ? (data.actions as Array<Record<string, unknown>>) : [];
+    const executionDurationMs = adbActions.reduce((sum: number, action: Record<string, unknown>) => {
+        const delay = Number((action as Record<string, unknown>).delayAfter ?? 0) || 0;
+        const typeName = String((action as Record<string, unknown>).type ?? '');
+        const swipeInner = (action as Record<string, unknown>).swipe as Record<string, unknown> | undefined;
+        if (typeName === 'swipe') return sum + (Math.max(300, Number(swipeInner?.duration ?? 0) || 0) + delay);
+        if (typeName === 'click' || typeName === 'keyevent' || typeName === 'text') return sum + 250 + delay;
         return sum + 300 + delay;
     }, 0) || 1200;
 
@@ -1132,8 +1166,8 @@ export default function WidgetPage() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*,.gif,audio/*';
-    input.onchange = async (e: any) => {
-        const file = e.target.files?.[0];
+    input.onchange = async (event: Event) => {
+        const file = (event.target as HTMLInputElement | null)?.files?.[0];
         if (!file) return;
         const fd = new FormData();
         fd.append('file', file);
@@ -1146,7 +1180,7 @@ export default function WidgetPage() {
     input.click();
   };
 
-  const renderEventSettings = (label: string, icon: any, soundField: keyof WidgetConfig, voiceField: keyof WidgetConfig, templateField: keyof WidgetConfig, onScreenField: keyof WidgetConfig, hints: string[], ttsToggle: keyof WidgetConfig, imgField: keyof WidgetConfig, enabledField: keyof WidgetConfig, type: string) => (
+  const renderEventSettings = (label: string, icon: React.ReactNode, soundField: keyof WidgetConfig, voiceField: keyof WidgetConfig, templateField: keyof WidgetConfig, onScreenField: keyof WidgetConfig, hints: string[], ttsToggle: keyof WidgetConfig, imgField: keyof WidgetConfig, enabledField: keyof WidgetConfig, type: string) => (
     <div className="space-y-6">
         <div className="flex justify-end"><button onClick={() => triggerTestEvent(type)} className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] font-bold text-white hover:bg-white/10 transition"><Play size={10} fill="currentColor" /> TEST</button></div>
         <div className={`p-4 rounded-2xl border flex items-center justify-between ${config[enabledField] ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-neutral-900/40 border-white/5 opacity-60'}`}>
@@ -1211,7 +1245,7 @@ export default function WidgetPage() {
                       {[
                         { id: "gift", icon: <Gift size={16} />, color: "text-pink-400", label: "Gift" }, { id: "comment", icon: <MessageSquare size={16} />, color: "text-blue-400", label: "Chat" }, { id: "like", icon: <Heart size={16} />, color: "text-red-400", label: "Like" }, { id: "join", icon: <UserPlus size={16} />, color: "text-amber-400", label: "Join" }, { id: "follow", icon: <UserPlus size={16} />, color: "text-indigo-400", label: "Follow" }, { id: "fan", icon: <Crown size={16} />, color: "text-purple-400", label: "Fan" }, { id: "share", icon: <Zap size={16} />, color: "text-emerald-400", label: "Share" },
                       ].map((cat) => (
-                        <button key={cat.id} onClick={() => setSettingsTab(cat.id as any)} className={`flex flex-col items-center justify-center py-2.5 rounded-2xl transition-all ${settingsTab === cat.id ? "bg-white/10 text-white border border-white/10" : "text-neutral-600 hover:bg-white/5"}`}><div className={settingsTab === cat.id ? cat.color : "text-neutral-700"}>{cat.icon}</div><span className="text-[8px] font-black uppercase mt-1 tracking-tighter">{cat.label}</span></button>
+                        <button key={cat.id} onClick={() => setSettingsTab(cat.id as "gift" | "comment" | "like" | "join" | "follow" | "fan" | "share")} className={`flex flex-col items-center justify-center py-2.5 rounded-2xl transition-all ${settingsTab === cat.id ? "bg-white/10 text-white border border-white/10" : "text-neutral-600 hover:bg-white/5"}`}><div className={settingsTab === cat.id ? cat.color : "text-neutral-700"}>{cat.icon}</div><span className="text-[8px] font-black uppercase mt-1 tracking-tighter">{cat.label}</span></button>
                       ))}
                     </div>
                     {settingsTab === "gift" && renderEventSettings("Gift", <Gift size={14} />, "openingSoundUrl", "giftVoice", "voiceOverTemplate", "onScreenGiftTemplate", ["{nickname}", "{giftname}"], "giftTtsEnabled", "giftImageUrl", "giftEnabled", "gift")}
@@ -1262,7 +1296,7 @@ export default function WidgetPage() {
              return (
               <div key={el.id} onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, el.id, "move"); }} style={{ left: state.x, top: state.y, width: state.width, height: state.height, position: 'absolute', zIndex: 10, outline: (showEditor && selectedId === el.id) ? '2px solid #10b981' : 'none', opacity: isVisible ? 1 : 0, transition: 'opacity 0.4s ease-in-out' }}>
                 {el.type === "text" ? (
-                    <div style={{ ...el.style, width: '100%', height: '100%', display: 'flex', alignItems: state.verticalAlign === 'top' ? 'flex-start' : state.verticalAlign === 'bottom' ? 'flex-end' : 'center', justifyContent: state.textAlign === 'left' ? 'flex-start' : state.textAlign === 'right' ? 'flex-end' : 'center', textAlign: state.textAlign as any, WebkitTextStroke: (el.style?.strokeWidth) ? `${el.style.strokeWidth}px ${el.style.strokeColor || '#000000'}` : undefined, paintOrder: 'stroke fill' }}>
+                    <div style={{ ...el.style, width: '100%', height: '100%', display: 'flex', alignItems: state.verticalAlign === 'top' ? 'flex-start' : state.verticalAlign === 'bottom' ? 'flex-end' : 'center', justifyContent: state.textAlign === 'left' ? 'flex-start' : state.textAlign === 'right' ? 'flex-end' : 'center', textAlign: state.textAlign as "left" | "center" | "right" | undefined, WebkitTextStroke: (el.style?.strokeWidth) ? `${el.style.strokeWidth}px ${el.style.strokeColor || '#000000'}` : undefined, paintOrder: 'stroke fill' }}>
                         {(() => {
                             const type = activeNotification?.type || settingsTab;
                             let t = state.content;
@@ -1277,11 +1311,11 @@ export default function WidgetPage() {
                     (() => {
                         let src = state.content;
                         if (activeNotification) {
-                            const catImg = (config as any)[`${activeNotification.type}ImageUrl`];
+                            const catImg = config[`${activeNotification.type}ImageUrl` as keyof WidgetConfig] as string | undefined;
                             if (catImg && !el.overrides?.[activeNotification.type]?.content) src = catImg;
                         }
                         if (!src && showEditor) return <div className="w-full h-full border border-dashed border-white/20 flex items-center justify-center text-[10px] text-white/20">DYNAMIC IMAGE</div>;
-                        return src ? <img src={src} className="w-full h-full" style={{ objectFit: state.objectFit as any }} /> : null;
+                        return src ? <img src={src} className="w-full h-full" style={{ objectFit: state.objectFit as "contain" | "cover" | "fill" | "none" | undefined }} /> : null;
                     })()
                 )}
                 {showEditor && selectedId === el.id && <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full cursor-se-resize" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, el.id, "resize"); }} />}
