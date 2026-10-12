@@ -111,7 +111,7 @@ async function startListener(tab) {
   const { listenerToken } = await getSettings();
   if (!listenerToken) throw new Error('Isi TIKTOK_LISTENER_TOKEN pada pengaturan extension.');
 
-  if (activeTabId !== null) await stopListener();
+  if (activeTabId !== null && activeTabId !== tab.id) await stopListener();
   activeTabId = tab.id;
   activeUsername = username;
 
@@ -134,9 +134,60 @@ async function startListener(tab) {
   return { running: true, username };
 }
 
+async function ensureCurrentTabListener() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+
+  const username = parseLiveUsername(tab.url || '');
+  if (!username) {
+    if (activeTabId !== null) {
+      await stopListener('Tab aktif bukan URL LIVE TikTok.');
+    }
+    return;
+  }
+
+  if (activeTabId !== tab.id || activeUsername !== username) {
+    await startListener(tab);
+  }
+}
+
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId !== activeTabId) return;
   void stopListener(`Tab TikTok terlepas dari debugger (${reason}).`);
+});
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void chrome.tabs.get(tabId).then((tab) => {
+    if (!tab?.url) return;
+    if (parseLiveUsername(tab.url)) {
+      void ensureCurrentTabListener();
+    } else if (activeTabId === tabId) {
+      void stopListener('Tab aktif bukan URL LIVE TikTok.');
+    }
+  }).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url && parseLiveUsername(changeInfo.url)) {
+    if (tabId === activeTabId) {
+      const username = parseLiveUsername(changeInfo.url);
+      if (username && username !== activeUsername) {
+        void startListener(tab).catch((error) => console.warn('[TikTok Tab Listener] Gagal restart tab listener:', error.message));
+      }
+      return;
+    }
+
+    void chrome.tabs.query({ active: true, currentWindow: true }).then(([activeTab]) => {
+      if (activeTab?.id === tabId) {
+        void startListener(tab).catch((error) => console.warn('[TikTok Tab Listener] Gagal aktifkan tab baru:', error.message));
+      }
+    }).catch(() => {});
+    return;
+  }
+
+  if (changeInfo.url && tabId === activeTabId) {
+    void stopListener('URL tab berubah keluar dari LIVE TikTok.');
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

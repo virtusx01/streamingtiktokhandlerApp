@@ -149,6 +149,18 @@ async function processFrame(frameBase64: string, request: Request) {
   }
 }
 
+export async function GET() {
+  return NextResponse.json({
+    running: Boolean(listenerStatus.running),
+    connected: Boolean(listenerStatus.connected),
+    isLive: Boolean(listenerStatus.isLive),
+    username: listenerStatus.username || '',
+    statusText: listenerStatus.statusText || 'Standby',
+    updatedAt: listenerStatus.updatedAt,
+    bridge: 'browser-tab'
+  });
+}
+
 export async function POST(req: Request) {
   if (!isAuthorizedTikTokListener(req)) {
     return NextResponse.json({ error: 'Token listener tidak valid.' }, { status: 401 });

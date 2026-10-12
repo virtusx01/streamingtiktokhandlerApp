@@ -484,10 +484,18 @@ export default function Home() {
 
   const checkWidgetStatus = async () => {
     try {
-      const res = await fetch('/api/events/status');
-      const data = await res.json();
-      setWidgetConnected(!!data?.connected);
-      setWidgetListenerCount(data?.listeners?.gift || 0);
+      const [statusRes, bridgeRes] = await Promise.all([
+        fetch('/api/events/status'),
+        fetch('/api/browser-listener')
+      ]);
+      const statusData = await statusRes.json();
+      const bridgeData = await bridgeRes.json();
+      const connected = Boolean(statusData?.connected || bridgeData?.connected);
+      setWidgetConnected(connected);
+      setWidgetListenerCount(statusData?.listeners?.gift || 0);
+      if (bridgeData?.statusText && !listenerDetail) {
+        setListenerDetail(bridgeData.statusText);
+      }
     } catch (e) {}
   };
 
