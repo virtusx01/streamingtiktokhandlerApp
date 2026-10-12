@@ -193,11 +193,6 @@ const DEFAULT_CONFIG: WidgetConfig = {
   triggerRewardsEnabled: true,
 };
 
-const VOICE_OPTIONS = [
-  { value: "id-ID-ArdiNeural", label: "Ardi (Pria)" },
-  { value: "id-ID-GadisNeural", label: "Gadis (Wanita)" },
-];
-
 const LOCAL_STORAGE_KEY = "widgetConfig_v2";
 const PENDING_WIDGET_ACKS_KEY = "pendingWidgetNotificationAcks";
 const widgetAckRequestsInFlight = new Set<string>();
@@ -308,14 +303,13 @@ export default function WidgetPage() {
   const isProcessingQueue = useRef(false);
   const interruptFlag = useRef(false);
   const activeNotificationRef = useRef<NotificationItem | null>(null);
-  const currentAudioSource = useRef<AudioBufferSourceNode | null>(null);
   const [audioLocked, setAudioLocked] = useState(true);
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const browserVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const elementsRef = useRef<Element[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const prefetchedTTS = useRef<Map<string, AudioBuffer>>(new Map());
-  const activePrefetches = useRef<number>(0);
   const configRef = useRef(config);
   const lastProcessTime = useRef<number>(Date.now());
   const watchdogInterval = useRef<NodeJS.Timeout | null>(null);
@@ -329,6 +323,18 @@ export default function WidgetPage() {
   useEffect(() => {
     elementsRef.current = elements;
   }, [elements]);
+
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    const updateVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      browserVoicesRef.current = voices;
+      setBrowserVoices(voices);
+    };
+    updateVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", updateVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", updateVoices);
+  }, []);
 
   const fonts = ["Baloo 2", "Open Sans", "Inter", "Roboto", "Passion One"];
 
@@ -736,34 +742,27 @@ export default function WidgetPage() {
 
     let voiceMessage = "";
     let priority = 0;
-    let voiceModel = currentConfig.commentVoice;
-
     if (type === 'comment') {
         voiceMessage = currentConfig.commentVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{comment}/g, rawComment);
         priority = 0;
     } else if (type === 'like') {
         voiceMessage = currentConfig.likeVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{likecount}/g, String(likeCount));
         priority = 1;
-        voiceModel = currentConfig.likeVoice;
     } else if (type === 'join') {
         voiceMessage = currentConfig.joinVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 0;
     } else if (type === 'follow') {
         voiceMessage = currentConfig.followVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 0;
-        voiceModel = currentConfig.followVoice;
     } else if (type === 'fan') {
         voiceMessage = currentConfig.fanVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 1;
-        voiceModel = currentConfig.fanVoice;
     } else if (type === 'share') {
         voiceMessage = currentConfig.shareVoiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username);
         priority = 1;
-        voiceModel = currentConfig.shareVoice;
     } else {
         voiceMessage = currentConfig.voiceOverTemplate.replace(/{nickname}/g, nickname).replace(/{username}/g, username).replace(/{giftname}/g, namaHadiah).replace(/{repeatcount}/g, String(repeatCount));
         priority = 2;
-        voiceModel = currentConfig.giftVoice;
     }
 
     const executionDurationMs = adbActions.reduce((sum: number, action: Record<string, unknown>) => {
@@ -827,16 +826,6 @@ export default function WidgetPage() {
         queue.push(item);
     }
 
-    // DYNAMIC PREFETCH (Skip low priority under load)
-    const qLen = queue.length;
-    let shouldPrefetch = true;
-    if (qLen > 10 && priority === 0) shouldPrefetch = false;
-    if (qLen > 20 && priority === 1) shouldPrefetch = false;
-
-    if (currentConfig.ttsEnabled && shouldPrefetch) {
-        prefetchTTSAudio(item.id, voiceMessage, voiceModel);
-    }
-
     if (priority === 2 && isProcessingQueue.current) {
         interruptIfLowPriority();
     }
@@ -847,10 +836,6 @@ export default function WidgetPage() {
   const interruptIfLowPriority = () => {
     const current = activeNotificationRef.current;
     if (current && current.priority < 2) {
-        if (currentAudioSource.current) {
-            try { currentAudioSource.current.stop(); } catch (e) {}
-            currentAudioSource.current = null;
-        }
         if (window.speechSynthesis) window.speechSynthesis.cancel();
         interruptFlag.current = true;
     }
@@ -868,21 +853,50 @@ export default function WidgetPage() {
     return true;
   };
 
-  const prefetchTTSAudio = async (itemId: string, text: string, voice: string) => {
-    const currentConfig = configRef.current;
-    if (!currentConfig.useLocalTTS || activePrefetches.current >= 3) return;
-    activePrefetches.current++;
+  const speakWithBrowserTTS = (text: string, preferredVoice: string, rate: number) => new Promise<void>(resolve => {
+    if (!("speechSynthesis" in window) || !text.trim()) {
+      console.error("[Widget] Browser speech synthesis is unavailable or the TTS text is empty.");
+      resolve();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = browserVoicesRef.current.find(candidate => candidate.name === preferredVoice)
+      || browserVoicesRef.current.find(candidate => candidate.lang.toLowerCase().startsWith("id"))
+      || null;
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    } else {
+      utterance.lang = "id-ID";
+    }
+    utterance.rate = Math.min(2, Math.max(0.5, rate));
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = window.setTimeout(() => {
+      console.warn("[Widget] Browser TTS exceeded its playback timeout; cancelling speech.");
+      window.speechSynthesis.cancel();
+      finish();
+    }, Math.min(30000, Math.max(5000, text.length * 180 / utterance.rate)));
+
+    utterance.onend = finish;
+    utterance.onerror = event => {
+      console.error("[Widget] Browser TTS playback failed:", event.error);
+      finish();
+    };
     try {
-      const url = `/api/tts?text=${encodeURIComponent(text)}&speed=${currentConfig.ttsSpeed}&voice=${encodeURIComponent(voice)}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const ab = await res.arrayBuffer();
-        if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-        const buf = await audioContextRef.current.decodeAudioData(ab);
-        prefetchedTTS.current.set(itemId, buf);
-      }
-    } catch (e) {} finally { activePrefetches.current--; }
-  };
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error("[Widget] Browser rejected the TTS request:", error);
+      finish();
+    }
+  });
 
   const processQueue = async () => {
     if (isProcessingQueue.current || notificationQueue.current.length === 0) return;
@@ -913,10 +927,10 @@ export default function WidgetPage() {
     if (qLen > 15) { displayDuration = 800; skipMusic = true; }
     if (qLen > 30) { displayDuration = 400; skipTTS = item.priority < 2; skipMusic = true; }
 
+    const notificationStartedAt = Date.now();
     const adbHoldDurationMs = Math.max(displayDuration, item.executionDurationMs ?? 1200);
 
     // TTS LOGIC
-    let ttsBuffer: AudioBuffer | null = null;
     let itemTtsEnabled = true;
     const type = item.type;
     if (type === 'gift') itemTtsEnabled = cfg.giftTtsEnabled !== false;
@@ -926,19 +940,6 @@ export default function WidgetPage() {
     else if (type === 'follow') itemTtsEnabled = cfg.followTtsEnabled !== false;
     else if (type === 'share') itemTtsEnabled = cfg.shareTtsEnabled !== false;
     else if (type === 'fan') itemTtsEnabled = cfg.fanTtsEnabled !== false;
-
-    if (cfg.ttsEnabled && itemTtsEnabled && !skipTTS) {
-        if (prefetchedTTS.current.has(item.id)) {
-            ttsBuffer = prefetchedTTS.current.get(item.id)!;
-            prefetchedTTS.current.delete(item.id);
-        } else if (item.priority === 2) {
-            // Wait up to 2s for high priority gift TTS
-            for(let i=0; i<20; i++) {
-                if (prefetchedTTS.current.has(item.id)) { ttsBuffer = prefetchedTTS.current.get(item.id)!; break; }
-                await new Promise(r => setTimeout(r, 100));
-            }
-        }
-    }
 
     // OPENING SOUND
     let soundUrl = "";
@@ -957,20 +958,23 @@ export default function WidgetPage() {
         ]);
     }
 
-    // TTS PLAYBACK
-    if (ttsBuffer && !interruptFlag.current) {
-        await playAudioBuffer(ttsBuffer);
-    } else if (!interruptFlag.current && !ttsBuffer && !skipTTS && cfg.ttsEnabled && itemTtsEnabled) {
-        // Fallback for missing buffer
-        await new Promise(r => setTimeout(r, displayDuration));
-    } else if (!interruptFlag.current) {
-        await new Promise(r => setTimeout(r, displayDuration));
+    // Browser TTS runs locally and does not request generated audio from the server.
+    if (!interruptFlag.current && !skipTTS && cfg.ttsEnabled && itemTtsEnabled) {
+        const voiceField = type === "gift" ? cfg.giftVoice
+          : type === "comment" ? cfg.commentVoice
+          : type === "like" ? cfg.likeVoice
+          : type === "join" ? cfg.commentVoice
+          : type === "follow" ? cfg.followVoice
+          : type === "fan" ? cfg.fanVoice
+          : cfg.shareVoice;
+        await speakWithBrowserTTS(item.message, voiceField, cfg.ttsSpeed);
     }
 
-    // Hold for the full item lifetime so the next notification waits until both UI and ADB work finish
+    // Keep the visual notification visible for its full minimum lifetime, including sound and TTS playback.
     const totalItemHoldMs = Math.max(adbHoldDurationMs, displayDuration, 1500);
-    if (!interruptFlag.current) {
-      await new Promise(r => setTimeout(r, totalItemHoldMs - displayDuration));
+    const remainingHoldMs = totalItemHoldMs - (Date.now() - notificationStartedAt);
+    if (!interruptFlag.current && remainingHoldMs > 0) {
+      await new Promise(r => setTimeout(r, remainingHoldMs));
     }
 
     setNotifVisible(false);
@@ -990,19 +994,6 @@ export default function WidgetPage() {
       audio.onerror = () => resolve(true);
       audio.play().catch(() => resolve(true));
       setTimeout(() => resolve(true), 12000);
-    });
-  };
-
-  const playAudioBuffer = (buffer: AudioBuffer): Promise<boolean> => {
-    return new Promise((resolve) => {
-      if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-      const ctx = audioContextRef.current;
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      src.connect(ctx.destination);
-      currentAudioSource.current = src;
-      src.onended = () => { currentAudioSource.current = null; resolve(true); };
-      src.start(0);
     });
   };
 
@@ -1123,7 +1114,7 @@ export default function WidgetPage() {
     input.click();
   };
 
-  const renderEventSettings = (label: string, icon: React.ReactNode, soundField: keyof WidgetConfig, voiceField: keyof WidgetConfig, templateField: keyof WidgetConfig, onScreenField: keyof WidgetConfig, hints: string[], ttsToggle: keyof WidgetConfig, imgField: keyof WidgetConfig, enabledField: keyof WidgetConfig, type: string) => (
+  const renderEventSettings = (label: string, icon: React.ReactNode, soundField: keyof WidgetConfig, voiceField: keyof WidgetConfig, templateField: keyof WidgetConfig, onScreenField: keyof WidgetConfig, ttsToggle: keyof WidgetConfig, imgField: keyof WidgetConfig, enabledField: keyof WidgetConfig, type: string) => (
     <div className="space-y-6">
         <div className="flex justify-end"><button onClick={() => triggerTestEvent(type)} className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] font-bold text-white hover:bg-white/10 transition"><Play size={10} fill="currentColor" /> TEST</button></div>
         <div className={`p-4 rounded-2xl border flex items-center justify-between ${config[enabledField] ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-neutral-900/40 border-white/5 opacity-60'}`}>
@@ -1140,7 +1131,25 @@ export default function WidgetPage() {
                     <div>
                         <label className="text-[9px] text-neutral-600 font-bold uppercase mb-1 block">Teks Layar</label>
                         <textarea value={config[onScreenField] as string} onChange={(e) => setConfig({...config, [onScreenField]: e.target.value})} className="w-full bg-neutral-900/50 border border-white/5 rounded-2xl p-3 text-xs text-white h-16 resize-none transition-all" />
-                        <div className="flex flex-wrap gap-1 mt-1">{hints.map(v => <span key={v} className="text-[8px] bg-white/5 text-neutral-500 px-2 py-0.5 rounded-md border border-white/5">{v}</span>)}</div>
+                        <div className="mt-2 rounded-xl border border-white/5 bg-black/20 p-3">
+                            <p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-neutral-500">Variabel yang bisa digunakan</p>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                                {[
+                                  ["{nickname}", "Nama tampilan pengguna"],
+                                  ["{username}", "Username TikTok"],
+                                  ["{giftname}", "Nama hadiah"],
+                                  ["{repeatcount}", "Jumlah hadiah"],
+                                  ["{likecount}", "Jumlah like"],
+                                  ["{comment}", "Isi komentar"],
+                                ].map(([token, description]) => (
+                                  <div key={token} className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                                    <code className="rounded bg-white/5 px-1.5 py-0.5 text-emerald-300">{token}</code>
+                                    <span className="text-neutral-500">{description}</span>
+                                  </div>
+                                ))}
+                            </div>
+                            <p className="mt-2 text-[8px] text-neutral-600">Variabel yang tidak terkait dengan jenis event akan kosong.</p>
+                        </div>
                     </div>
                     <div>
                         <label className="text-[9px] text-neutral-600 font-bold uppercase mb-1 block">GIF / Animasi</label>
@@ -1150,16 +1159,37 @@ export default function WidgetPage() {
                         </div>
                     </div>
                 </div>
+                <div className="space-y-3 p-4 bg-neutral-900/40 rounded-3xl border border-white/5">
+                    <div>
+                        <h5 className="text-[9px] font-black text-neutral-300 uppercase tracking-[0.2em] flex items-center gap-2"><Volume2 size={10} /> SUARA NOTIFIKASI</h5>
+                        <p className="mt-1 text-[9px] text-neutral-500">Efek suara yang diputar saat notifikasi muncul.</p>
+                    </div>
+                    <div className="flex gap-2">
+                        <input type="text" value={config[soundField] as string} onChange={(e) => setConfig({...config, [soundField]: e.target.value})} placeholder="URL suara notifikasi (opsional)" className="min-w-0 flex-1 rounded-xl border border-white/5 bg-neutral-900/50 px-3 py-2 text-[10px] text-white" />
+                        <button onClick={() => handleMediaUpload(soundField)} className="shrink-0 rounded-xl border border-white/5 bg-neutral-900/50 px-3 text-emerald-500 transition hover:bg-emerald-500 hover:text-black" aria-label="Upload suara notifikasi"><Upload size={14} /></button>
+                    </div>
+                </div>
                 <div className="space-y-4 p-4 bg-neutral-900/40 rounded-3xl border border-white/5">
                     <div className="flex items-center justify-between">
-                        <h5 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em] flex items-center gap-2"><Volume2 size={10} /> SUARA & TTS</h5>
-                        <div onClick={() => setConfig({...config, [ttsToggle]: !config[ttsToggle]})} className={`w-9 h-5 rounded-full relative transition-all cursor-pointer ${config[ttsToggle] ? 'bg-emerald-500/80' : 'bg-neutral-800'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config[ttsToggle] ? 'translate-x-4' : 'translate-x-0.5'}`} /></div>
+                        <div>
+                            <h5 className="text-[9px] font-black text-neutral-300 uppercase tracking-[0.2em] flex items-center gap-2"><Mic2 size={10} /> TTS PEMBACA TEKS</h5>
+                            <p className="mt-1 text-[9px] text-neutral-500">Dibacakan oleh suara bawaan browser, tanpa meminta audio dari server.</p>
+                        </div>
+                        <button type="button" aria-label={`TTS ${config[ttsToggle] ? "aktif" : "nonaktif"}`} aria-pressed={Boolean(config[ttsToggle])} onClick={() => setConfig({...config, [ttsToggle]: !config[ttsToggle]})} className={`h-5 w-9 rounded-full relative transition-all ${config[ttsToggle] ? 'bg-emerald-500/80' : 'bg-neutral-800'}`}><span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config[ttsToggle] ? 'translate-x-4' : 'translate-x-0.5'}`} /></button>
                     </div>
-                    <div><textarea value={config[templateField] as string} onChange={(e) => setConfig({...config, [templateField]: e.target.value})} className="w-full bg-neutral-900/50 border border-white/5 rounded-2xl p-3 text-xs text-white h-16 resize-none" /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => handleMediaUpload(soundField)} className="py-2.5 bg-neutral-900/50 border border-white/5 rounded-xl text-emerald-500 text-[10px] font-black hover:bg-emerald-500 hover:text-black transition uppercase">Upload Sound</button>
-                        <select value={config[voiceField] as string} onChange={(e) => setConfig({...config, [voiceField]: e.target.value})} className="bg-neutral-900/50 border border-white/5 rounded-xl py-2.5 px-3 text-[10px] text-white font-bold">{VOICE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select>
+                    <div>
+                        <label className="mb-1 block text-[9px] font-bold uppercase text-neutral-500">Teks yang dibacakan TTS</label>
+                        <textarea value={config[templateField] as string} onChange={(e) => setConfig({...config, [templateField]: e.target.value})} className="w-full bg-neutral-900/50 border border-white/5 rounded-2xl p-3 text-xs text-white h-16 resize-none" />
                     </div>
+                    <label className="block">
+                        <span className="mb-1 block text-[9px] font-bold uppercase text-neutral-500">Suara browser</span>
+                        <select value={config[voiceField] as string} onChange={(e) => setConfig({...config, [voiceField]: e.target.value})} className="w-full bg-neutral-900/50 border border-white/5 rounded-xl py-2.5 px-3 text-[10px] text-white font-bold">
+                            <option value="">Otomatis (bahasa Indonesia)</option>
+                            {config[voiceField] && !browserVoices.some(voice => voice.name === config[voiceField]) && <option value={config[voiceField] as string}>{config[voiceField]} (pilihan lama; otomatis jika tidak tersedia)</option>}
+                            {browserVoices.map(voice => <option key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</option>)}
+                        </select>
+                        {browserVoices.length === 0 && <span className="mt-1 block text-[8px] text-amber-400">Browser belum menyediakan daftar suara. TTS akan memakai suara default jika tersedia.</span>}
+                    </label>
                 </div>
             </div>
         )}
@@ -1198,13 +1228,13 @@ export default function WidgetPage() {
                         <button key={cat.id} onClick={() => setSettingsTab(cat.id as "gift" | "comment" | "like" | "join" | "follow" | "fan" | "share")} className={`flex flex-col items-center justify-center py-2.5 rounded-2xl transition-all ${settingsTab === cat.id ? "bg-white/10 text-white border border-white/10" : "text-neutral-600 hover:bg-white/5"}`}><div className={settingsTab === cat.id ? cat.color : "text-neutral-700"}>{cat.icon}</div><span className="text-[8px] font-black uppercase mt-1 tracking-tighter">{cat.label}</span></button>
                       ))}
                     </div>
-                    {settingsTab === "gift" && renderEventSettings("Gift", <Gift size={14} />, "openingSoundUrl", "giftVoice", "voiceOverTemplate", "onScreenGiftTemplate", ["{nickname}", "{giftname}"], "giftTtsEnabled", "giftImageUrl", "giftEnabled", "gift")}
-                    {settingsTab === "comment" && renderEventSettings("Chat", <MessageSquare size={14} />, "commentOpeningSoundUrl", "commentVoice", "commentVoiceOverTemplate", "onScreenCommentTemplate", ["{nickname}", "{comment}"], "commentTtsEnabled", "commentImageUrl", "commentEnabled", "comment")}
-                    {settingsTab === "like" && renderEventSettings("Like", <Heart size={14} />, "likeOpeningSoundUrl", "likeVoice", "likeVoiceOverTemplate", "onScreenLikeTemplate", ["{nickname}", "{likecount}"], "likeTtsEnabled", "likeImageUrl", "likeEnabled", "like")}
-                    {settingsTab === "join" && renderEventSettings("Join", <UserPlus size={14} />, "joinOpeningSoundUrl", "commentVoice", "joinVoiceOverTemplate", "onScreenJoinTemplate", ["{nickname}"], "joinTtsEnabled", "joinImageUrl", "joinEnabled", "join")}
-                    {settingsTab === "follow" && renderEventSettings("Follow", <UserPlus size={14} />, "followOpeningSoundUrl", "followVoice", "followVoiceOverTemplate", "onScreenFollowTemplate", ["{nickname}"], "followTtsEnabled", "followImageUrl", "followEnabled", "follow")}
-                    {settingsTab === "fan" && renderEventSettings("Fan", <Crown size={14} />, "fanOpeningSoundUrl", "fanVoice", "fanVoiceOverTemplate", "onScreenFanTemplate", ["{nickname}"], "fanTtsEnabled", "fanImageUrl", "fanEnabled", "fan")}
-                    {settingsTab === "share" && renderEventSettings("Share", <Zap size={14} />, "shareOpeningSoundUrl", "shareVoice", "shareVoiceOverTemplate", "onScreenShareTemplate", ["{nickname}"], "shareTtsEnabled", "shareImageUrl", "shareEnabled", "share")}
+                    {settingsTab === "gift" && renderEventSettings("Gift", <Gift size={14} />, "openingSoundUrl", "giftVoice", "voiceOverTemplate", "onScreenGiftTemplate", "giftTtsEnabled", "giftImageUrl", "giftEnabled", "gift")}
+                    {settingsTab === "comment" && renderEventSettings("Chat", <MessageSquare size={14} />, "commentOpeningSoundUrl", "commentVoice", "commentVoiceOverTemplate", "onScreenCommentTemplate", "commentTtsEnabled", "commentImageUrl", "commentEnabled", "comment")}
+                    {settingsTab === "like" && renderEventSettings("Like", <Heart size={14} />, "likeOpeningSoundUrl", "likeVoice", "likeVoiceOverTemplate", "onScreenLikeTemplate", "likeTtsEnabled", "likeImageUrl", "likeEnabled", "like")}
+                    {settingsTab === "join" && renderEventSettings("Join", <UserPlus size={14} />, "joinOpeningSoundUrl", "commentVoice", "joinVoiceOverTemplate", "onScreenJoinTemplate", "joinTtsEnabled", "joinImageUrl", "joinEnabled", "join")}
+                    {settingsTab === "follow" && renderEventSettings("Follow", <UserPlus size={14} />, "followOpeningSoundUrl", "followVoice", "followVoiceOverTemplate", "onScreenFollowTemplate", "followTtsEnabled", "followImageUrl", "followEnabled", "follow")}
+                    {settingsTab === "fan" && renderEventSettings("Fan", <Crown size={14} />, "fanOpeningSoundUrl", "fanVoice", "fanVoiceOverTemplate", "onScreenFanTemplate", "fanTtsEnabled", "fanImageUrl", "fanEnabled", "fan")}
+                    {settingsTab === "share" && renderEventSettings("Share", <Zap size={14} />, "shareOpeningSoundUrl", "shareVoice", "shareVoiceOverTemplate", "onScreenShareTemplate", "shareTtsEnabled", "shareImageUrl", "shareEnabled", "share")}
                     <div className="pt-4 border-t border-white/5 space-y-4">
                         <div className="flex items-center justify-between p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10"><div className="flex items-center gap-3"><Mic2 size={16} className="text-emerald-400" /><div><p className="text-xs font-bold text-white">Global TTS</p></div></div><div onClick={() => setConfig({...config, ttsEnabled: !config.ttsEnabled})} className={`w-11 h-6 rounded-full relative transition-all cursor-pointer ${config.ttsEnabled ? 'bg-emerald-500' : 'bg-neutral-800'}`}><div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${config.ttsEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></div></div>
                         {config.ttsEnabled && <div className="px-1"><label className="text-[10px] text-neutral-500 font-bold uppercase mb-2 block">Speed ({config.ttsSpeed}x)</label><input type="range" min="0.5" max="2.0" step="0.1" value={config.ttsSpeed} onChange={(e) => setConfig({...config, ttsSpeed: parseFloat(e.target.value)})} className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-500" /></div>}
