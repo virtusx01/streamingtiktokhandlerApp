@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
-import { spawn, ChildProcess } from 'child_process';
-import path from 'path';
 import { getSetting, setSetting } from '@/lib/db';
 import { listenerStatus, updateListenerStatus } from '@/lib/listener-state';
 import { emitStatusEvent } from '@/lib/events';
 import { tiktokNodeListener } from '@/lib/tiktok-node-listener';
-import { getPythonCommand } from '@/lib/python-runner';
 
 interface GlobalListenerHolder {
-  __python_process?: ChildProcess | null;
   __last_listener_log?: string;
   __last_listener_error?: string;
 }
@@ -16,9 +12,8 @@ const globalHolder = global as unknown as GlobalListenerHolder;
 
 export async function GET() {
   const isNodeActive = tiktokNodeListener.isActive();
-  const isPythonRunning = Boolean(globalHolder.__python_process && !globalHolder.__python_process.killed);
   const isFreshLocalStatus = Boolean(listenerStatus.running && (Date.now() - listenerStatus.updatedAt < 25000));
-  const isRunningLocally = isNodeActive || isPythonRunning || isFreshLocalStatus;
+  const isRunningLocally = isNodeActive || isFreshLocalStatus;
 
   if (isRunningLocally) {
     updateListenerStatus({
@@ -37,7 +32,7 @@ export async function GET() {
 
     return NextResponse.json({
       running: true,
-      engine: isPythonRunning ? 'python' : isNodeActive ? 'nodejs' : 'local_runner',
+      engine: isNodeActive ? 'nodejs' : 'local_runner',
       status: listenerStatus
     });
   }
@@ -138,15 +133,7 @@ export async function POST(req: Request) {
       setSetting('listener_status_text', `Menghubungkan ke TikTok @${targetUsername}...`);
       setSetting('listener_last_heartbeat', String(Date.now()));
 
-      // Stop any legacy python process if running
-      if (globalHolder.__python_process && !globalHolder.__python_process.killed) {
-        try {
-          globalHolder.__python_process.kill();
-        } catch {}
-        globalHolder.__python_process = null;
-      }
-
-      // Stop any node listener before restarting
+      // Stop any existing node listener before restarting
       if (tiktokNodeListener.isActive()) {
         try {
           await tiktokNodeListener.stop();
@@ -156,109 +143,27 @@ export async function POST(req: Request) {
       globalHolder.__last_listener_error = '';
       globalHolder.__last_listener_log = '';
 
-      const listenerEngine = (process.env.TIKTOK_LISTENER_ENGINE || 'nodejs').toLowerCase();
-      const shouldUsePython = listenerEngine === 'python';
-      const shouldUseNode = listenerEngine === 'nodejs' || listenerEngine === 'auto' || !shouldUsePython;
+      try {
+        await tiktokNodeListener.start(targetUsername);
 
-      // Prefer the Node.js TikTok Live connector first. In practice it is usually more stable for
-      // room resolution and live checks than the Python client in this environment.
-      if (shouldUseNode) {
-        try {
-          await tiktokNodeListener.start(targetUsername);
-
-          return NextResponse.json({
-            message: 'Listener Node.js started',
-            engine: 'nodejs',
-            username: targetUsername,
-            status: listenerStatus
-          });
-        } catch (err: any) {
-          console.warn('[TikTokListener] Node.js listener failed, falling back to Python:', err.message);
-          globalHolder.__last_listener_error = err.message;
-        }
+        return NextResponse.json({
+          message: 'TikTok listener started with tiktok-live-connector',
+          engine: 'nodejs',
+          username: targetUsername,
+          status: listenerStatus
+        });
+      } catch (err: any) {
+        console.warn('[TikTokListener] Node.js listener failed:', err.message);
+        globalHolder.__last_listener_error = err.message;
+        return NextResponse.json(
+          { error: `Listener TikTok gagal dimulai: ${err.message}` },
+          { status: 500 }
+        );
       }
-
-      // Fallback to Python listener when Node.js is unavailable or explicitly selected.
-      const pythonCmd = getPythonCommand();
-      if (pythonCmd) {
-        const scriptPath = path.join(process.cwd(), 'main.py');
-        const port = process.env.PORT || '3005';
-        const baseUrl = process.env.NEXT_BASE_URL || `http://localhost:${port}`;
-
-        try {
-          const pyProc = spawn(pythonCmd, [scriptPath, targetUsername], {
-            env: {
-              ...process.env,
-              PYTHONIOENCODING: 'utf-8',
-              PYTHONUNBUFFERED: '1',
-              NEXT_BASE_URL: baseUrl
-            },
-            stdio: 'pipe',
-            detached: false
-          });
-          globalHolder.__python_process = pyProc;
-
-          const initialStatus = updateListenerStatus({
-            running: true,
-            connected: false,
-            isLive: false,
-            username: targetUsername,
-            statusText: `Menghubungkan ke TikTok @${targetUsername} (Python)...`
-          });
-          emitStatusEvent(initialStatus);
-
-          pyProc.stdout?.on('data', (data) => {
-            const text = data.toString().trim();
-            if (text) {
-              globalHolder.__last_listener_log = text;
-              console.log(`[TikTokListener] ${text}`);
-            }
-          });
-
-          pyProc.stderr?.on('data', (data) => {
-            const text = data.toString().trim();
-            if (text) {
-              globalHolder.__last_listener_error = text;
-              console.error(`[TikTokListener ERR] ${text}`);
-            }
-          });
-
-          pyProc.on('exit', (code) => {
-            console.log(`[TikTokListener] Python exited code ${code}`);
-            if (globalHolder.__python_process === pyProc) {
-              globalHolder.__python_process = null;
-            }
-          });
-
-          return NextResponse.json({
-            message: 'TikTok listener started',
-            engine: 'python',
-            username: targetUsername,
-            status: initialStatus
-          });
-        } catch (pyErr: any) {
-          console.warn('[TikTokListener] Python spawn failed:', pyErr.message);
-          globalHolder.__last_listener_error = pyErr.message;
-        }
-      }
-
-      return NextResponse.json(
-        { error: 'Tidak ada listener TikTok yang bisa dijalankan.' },
-        { status: 500 }
-      );
     }
 
     if (action === 'stop') {
-      // Stop Node.js listener
       await tiktokNodeListener.stop();
-
-      // Also stop Python process if running
-      if (globalHolder.__python_process) {
-        try {
-          globalHolder.__python_process.kill();
-        } catch {}
-        globalHolder.__python_process = null;
-      }
 
       updateListenerStatus({
         running: false,
