@@ -20,10 +20,20 @@ function parseLiveUsername(url) {
   }
 }
 
+function normalizeAppUrl(rawUrl) {
+  const value = String(rawUrl || 'https://tiktoklistener.onrender.com').trim();
+  if (!value) return 'https://tiktoklistener.onrender.com';
+  return value
+    .replace(/\/+$/, '')
+    .replace(/\/widget\/callback\/?$/, '')
+    .replace(/\/widget\/?$/, '')
+    .replace(/\/callback\/?$/, '');
+}
+
 async function getSettings() {
   const saved = await chrome.storage.local.get(['appUrl', 'listenerToken']);
   return {
-    appUrl: String(saved.appUrl || 'https://tiktoklistener.onrender.com').replace(/\/+$/, ''),
+    appUrl: normalizeAppUrl(saved.appUrl || 'https://tiktoklistener.onrender.com'),
     listenerToken: String(saved.listenerToken || '').trim()
   };
 }
