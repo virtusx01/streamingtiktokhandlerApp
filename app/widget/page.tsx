@@ -501,7 +501,11 @@ export default function WidgetPage() {
       try {
         const payload = JSON.parse(event.data);
         const data = payload.data || payload;
-        console.info(`[Widget] Received ${payload.type || "unknown"} event.`);
+        const eventType = payload.type || "unknown";
+        if (eventType === 'status' || eventType === 'sociabuzz') {
+          return;
+        }
+        console.info(`[Widget] Received ${eventType} event.`);
         const widgetNotificationId = typeof data.widgetNotificationId === 'string'
           ? data.widgetNotificationId
           : undefined;
@@ -562,7 +566,6 @@ export default function WidgetPage() {
                 lastLikeMilestone.current = milestone;
                 addToQueue({ ...payload, likeCount: milestone });
             } else if (config.likeEnabled) {
-                // If like is enabled, display the like notification immediately
                 addToQueue({ ...payload, likeCount: currentTotal });
             } else if (requiresWidgetAck) {
                 acknowledgeWidgetNotification(widgetNotificationId);
@@ -570,7 +573,9 @@ export default function WidgetPage() {
             return;
         }
 
-        addToQueue(payload);
+        if (payload.type === 'gift' || payload.type === 'comment' || payload.type === 'join' || payload.type === 'follow' || payload.type === 'fan' || payload.type === 'share') {
+          addToQueue(payload);
+        }
       } catch (e) {
         console.error("[Widget] Failed to process live event:", e);
       }
