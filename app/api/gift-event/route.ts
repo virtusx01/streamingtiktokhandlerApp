@@ -56,6 +56,8 @@ interface GiftEventPayload {
   actions?: unknown[];
 }
 
+const GIFT_AGGREGATION_WINDOW_MS = 1000;
+
 interface AggregationRecord {
   timeout: ReturnType<typeof setTimeout>;
   giftData: GiftEventPayload;
@@ -241,10 +243,10 @@ export async function POST(req: Request) {
         Array.from(existingAgg.combos.entries()).map(([m, c]) => `${m}: x${c}`).join(', ')
       );
 
-      // Schedule a new 5-second timer from now
+      // Keep combo counts together while publishing gifts promptly.
       existingAgg.timeout = setTimeout(() => {
         processAggregatedGift(aggKey);
-      }, 5000);
+      }, GIFT_AGGREGATION_WINDOW_MS);
     } else {
       // Create new aggregation record
       const combos = new Map<string, number>();
@@ -257,10 +259,10 @@ export async function POST(req: Request) {
         allowAdbActions,
         timeout: setTimeout(() => {
           processAggregatedGift(aggKey);
-        }, 5000)
+        }, GIFT_AGGREGATION_WINDOW_MS)
       };
 
-      console.log(`[Aggregation] Created new 5s window for ${giftName} from ${username} (msgId: ${msgId}, x${repeatCount})`);
+      console.log(`[Aggregation] Created ${GIFT_AGGREGATION_WINDOW_MS}ms window for ${giftName} from ${username} (msgId: ${msgId}, x${repeatCount})`);
 
       aggregations.set(aggKey, newAgg);
     }

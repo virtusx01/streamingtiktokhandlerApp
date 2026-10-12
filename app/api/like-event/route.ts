@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
     const username = likeData.username || 'unknown';
     const nickname = likeData.nickname || 'Viewer';
-    const incomingTotal = likeData.likeCount || 0; // Cumulative session total from TikTok
+    const incomingTotal = Number(likeData.totalLikeCount ?? likeData.likeCount ?? 0);
 
     const widgetConfig = getSetting('widgetConfig', {});
     const threshold = widgetConfig.likeThreshold || 100;

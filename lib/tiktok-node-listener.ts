@@ -5,6 +5,7 @@ import {
   emitCommentEvent,
   emitJoinEvent,
   emitFollowEvent,
+  emitFanEvent,
   emitShareEvent
 } from './events';
 import { setSetting } from './db';
@@ -371,7 +372,7 @@ class TikTokNodeListener {
       try {
         const uniqueId = String(data.uniqueId || 'viewer');
         const nickname = String(data.nickname || uniqueId || 'Viewer');
-        const likeCount = Number(data.likeCount || data.totalLikeCount || 1);
+        const likeCount = Number(data.totalLikeCount ?? data.likeCount ?? 1);
 
         const payload = {
           likeCount,
@@ -394,6 +395,22 @@ class TikTokNodeListener {
           console.warn('[TikTokNodeListener] Failed to post like to internal route:', err.message);
         });
       } catch (e) {}
+    });
+
+    conn.on('superFan', (data: any) => {
+      try {
+        const fanUser = data.fansLevelParam?.user;
+        const uniqueId = String(fanUser?.uniqueId || data.uniqueId || 'viewer');
+        const nickname = String(fanUser?.nickname || data.nickname || uniqueId || 'Viewer');
+        const messageId = String(data.common?.msgId || `${uniqueId}_${Date.now()}`);
+        const eventId = `fan_${messageId}`;
+        if (this.seenEvents.has(eventId)) return;
+        this.seenEvents.add(eventId);
+
+        emitFanEvent({ nickname, username: uniqueId, eventId });
+      } catch (e) {
+        console.error('[TikTokNodeListener] Error processing fan event:', e);
+      }
     });
 
     conn.on('member', (data: any) => {

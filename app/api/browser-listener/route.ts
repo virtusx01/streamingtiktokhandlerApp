@@ -29,7 +29,8 @@ const supportedMessageTypes = new Set([
   'WebcastGiftMessage',
   'WebcastLikeMessage',
   'WebcastSocialMessage',
-  'WebcastFansclubMessage'
+  'WebcastFansclubMessage',
+  'WebcastBarrageMessage'
 ]);
 
 function stringValue(value: unknown, fallback = ''): string {
@@ -126,7 +127,7 @@ async function processFrame(frameBase64: string, request: Request) {
 
     if (message.type === 'WebcastLikeMessage') {
       await forwardToEventRoute(processLikeEvent, request, {
-        likeCount: Number(eventData.likeCount || eventData.totalLikeCount || 1),
+        likeCount: Number(eventData.totalLikeCount ?? eventData.likeCount ?? 1),
         nickname,
         username: uniqueId,
         eventId: `like_${uniqueId}_${messageId}`
@@ -147,6 +148,22 @@ async function processFrame(frameBase64: string, request: Request) {
     }
 
     const displayType = stringValue(eventData.displayType).toLowerCase();
+    const barrageDisplayType = stringValue(objectValue(eventData.content).displayType).toLowerCase();
+    if (
+      message.type === 'WebcastBarrageMessage' &&
+      (displayType.includes('ttlive_superfan') || barrageDisplayType.includes('ttlive_superfan'))
+    ) {
+      const fansLevelParam = objectValue(eventData.fansLevelParam);
+      const fanUser = objectValue(fansLevelParam.user);
+      const fanUsername = stringValue(fanUser.uniqueId, uniqueId);
+      const fanNickname = stringValue(fanUser.nickname, nickname);
+      const eventId = `fan_${messageId}`;
+      if (!isDuplicate(eventId, 5000)) {
+        emitFanEvent({ nickname: fanNickname, username: fanUsername, eventId });
+      }
+      continue;
+    }
+
     const eventId = `social_${messageId}`;
     if (isDuplicate(eventId, 5000)) continue;
     if (displayType.includes('follow')) {

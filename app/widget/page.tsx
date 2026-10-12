@@ -453,8 +453,7 @@ export default function WidgetPage() {
           }
         }
         const requiresWidgetAck = Boolean(widgetNotificationId);
-        const rawEventId = String(data.eventId || data.msgId || data.giftId || data.timestamp || "");
-        const contentHash = `${data.username}_${data.giftName || data.comment || ""}_${data.repeatCount || 1}`;
+        const rawEventId = String(data.eventId || data.msgId || data.timestamp || "");
         
         // 1. Absolute Dedup (If eventId is perfectly identical, drop it permanently)
         if (!requiresWidgetAck && data.eventId && processedEventIds.current.has(data.eventId)) {
@@ -479,23 +478,11 @@ export default function WidgetPage() {
         // 2. Primary Dedup (Event ID fallback for 10s)
         if (!requiresWidgetAck && rawEventId && duplicateGuard.current.has(`${payload.type}_${rawEventId}`)) return;
         
-        // 3. Secondary Dedup (Content Hash - 3s window)
-        const contentDedupId = `${payload.type}_content_${contentHash}`;
-        if (!requiresWidgetAck && !data.isTest && duplicateGuard.current.has(contentDedupId)) {
-            console.log(`[Widget] Dropped content duplicate: ${contentDedupId}`);
-            return;
-        }
-
         // Register in guard
         if (!requiresWidgetAck && rawEventId) {
             const idKey = `${payload.type}_${rawEventId}`;
             duplicateGuard.current.add(idKey);
             setTimeout(() => duplicateGuard.current.delete(idKey), 10000); // 10s window
-        }
-        
-        if (!requiresWidgetAck && !data.isTest) {
-            duplicateGuard.current.add(contentDedupId);
-            setTimeout(() => duplicateGuard.current.delete(contentDedupId), 3000); // 3s window for content match
         }
  
         if (payload.type === 'like') {
@@ -504,7 +491,7 @@ export default function WidgetPage() {
                 return;
             }
 
-            const currentTotal = data.likeCount || 1;
+            const currentTotal = Number(data.totalLikeCount ?? data.likeCount ?? 1);
             const threshold = Math.max(1, config.likeThreshold || 50);
             const milestone = Math.floor(currentTotal / threshold) * threshold;
             if (milestone > 0 && milestone > lastLikeMilestone.current) {
