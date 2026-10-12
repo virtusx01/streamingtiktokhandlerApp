@@ -98,13 +98,11 @@ class TikTokNodeListener {
       throw new Error('Username TikTok tidak valid.');
     }
 
-    // If already active with the same username and connected, do nothing
     if (this.active && this.currentUsername.toLowerCase() === cleanUser.toLowerCase()) {
       console.log(`[TikTokNodeListener] Already active for @${cleanUser}`);
       return;
     }
 
-    // Stop any existing session
     await this.stop();
 
     this.active = true;
@@ -118,7 +116,7 @@ class TikTokNodeListener {
       statusText: `Menghubungkan ke @${cleanUser} (Node.js)...`
     });
 
-    console.log(`🚀 [TikTokNodeListener] Memulai listener JavaScript murni untuk @${cleanUser}`);
+    console.log(`?? [TikTokNodeListener] Memulai listener JavaScript murni untuk @${cleanUser}`);
     this.connectLoop();
   }
 
@@ -144,7 +142,7 @@ class TikTokNodeListener {
       isLive: false,
       statusText: 'Listener JavaScript dihentikan.'
     });
-    console.log(`🛑 [TikTokNodeListener] Listener dihentikan.`);
+    console.log(`?? [TikTokNodeListener] Listener dihentikan.`);
   }
 
   private async connectLoop(): Promise<void> {
@@ -160,7 +158,7 @@ class TikTokNodeListener {
         this.connection = null;
       }
 
-      console.log(`🔄 [TikTokNodeListener] Memeriksa status Live @${username}...`);
+      console.log(`?? [TikTokNodeListener] Memeriksa status Live @${username}...`);
       broadcastListenerStatus({
         running: true,
         connected: false,
@@ -180,7 +178,6 @@ class TikTokNodeListener {
 
       this.setupHandlers(conn, username);
 
-      // 1. Check if user is currently live before connecting
       let isUserLive = false;
       try {
         isUserLive = await conn.fetchIsLive();
@@ -189,7 +186,7 @@ class TikTokNodeListener {
       }
 
       if (!isUserLive) {
-        console.log(`⏳ [TikTokNodeListener] @${username} sedang Offline. Standby mengecek ulang dalam 15 detik...`);
+        console.log(`? [TikTokNodeListener] @${username} sedang Offline. Standby mengecek ulang dalam 15 detik...`);
         broadcastListenerStatus({
           running: this.active,
           connected: false,
@@ -206,10 +203,9 @@ class TikTokNodeListener {
         return;
       }
 
-      // 2. User is live! Connect to room
-      console.log(`🚀 [TikTokNodeListener] @${username} sedang LIVE! Menghubungkan ke stream...`);
+      console.log(`?? [TikTokNodeListener] @${username} sedang LIVE! Menghubungkan ke stream...`);
       const state = await conn.connect();
-      console.log(`📡 [TikTokNodeListener] Berhasil terhubung ke Live @${username} (Room: ${state.roomId})`);
+      console.log(`?? [TikTokNodeListener] Berhasil terhubung ke Live @${username} (Room: ${state.roomId})`);
 
       broadcastListenerStatus({
         running: true,
@@ -219,17 +215,16 @@ class TikTokNodeListener {
         roomId: String(state.roomId || ''),
         statusText: `Terhubung ke Live @${username}`
       });
-
     } catch (err: any) {
       const errMsg = String(err?.message || err);
-      const isOffline = errMsg.toLowerCase().includes('offline') || 
-                        errMsg.toLowerCase().includes("isn't online") ||
-                        errMsg.toLowerCase().includes('not online') ||
-                        errMsg.toLowerCase().includes('not found') ||
-                        errMsg.toLowerCase().includes('missing');
+      const isOffline = errMsg.toLowerCase().includes('offline') ||
+        errMsg.toLowerCase().includes("isn't online") ||
+        errMsg.toLowerCase().includes('not online') ||
+        errMsg.toLowerCase().includes('not found') ||
+        errMsg.toLowerCase().includes('missing');
 
       if (!isOffline) {
-        console.log(`⏳ [TikTokNodeListener] Gagal terhubung: ${errMsg}`);
+        console.log(`? [TikTokNodeListener] Gagal terhubung: ${errMsg}`);
       }
 
       const statusMsg = isOffline
@@ -244,7 +239,6 @@ class TikTokNodeListener {
         statusText: statusMsg
       });
 
-      // Retry after delay if still active
       if (this.active) {
         const delay = isOffline ? 15000 : 15000;
         this.reconnectTimer = setTimeout(() => {
@@ -256,7 +250,7 @@ class TikTokNodeListener {
 
   private setupHandlers(conn: WebcastPushConnection, username: string): void {
     conn.on('connected', (state: any) => {
-      console.log(`📡 [TikTokNodeListener] Event 'connected' room: ${state?.roomId}`);
+      console.log(`?? [TikTokNodeListener] Event 'connected' room: ${state?.roomId}`);
       broadcastListenerStatus({
         running: true,
         connected: true,
@@ -268,7 +262,7 @@ class TikTokNodeListener {
     });
 
     conn.on('disconnected', () => {
-      console.log(`🔌 [TikTokNodeListener] Event 'disconnected' dari @${username}`);
+      console.log(`?? [TikTokNodeListener] Event 'disconnected' dari @${username}`);
       broadcastListenerStatus({
         connected: false,
         isLive: false,
@@ -283,7 +277,7 @@ class TikTokNodeListener {
     });
 
     conn.on('streamEnd', () => {
-      console.log(`🛑 [TikTokNodeListener] Live streaming @${username} berakhir.`);
+      console.log(`?? [TikTokNodeListener] Live streaming @${username} berakhir.`);
       broadcastListenerStatus({
         connected: false,
         isLive: false,
@@ -312,7 +306,7 @@ class TikTokNodeListener {
           eventId
         };
 
-        console.log(`💬 [TikTokNodeListener] ${payload.nickname}: ${payload.comment}`);
+        console.log(`?? [TikTokNodeListener] ${payload.nickname}: ${payload.comment}`);
         emitCommentEvent(payload);
       } catch (e) {
         console.error('[TikTokNodeListener] Error processing chat event:', e);
@@ -347,7 +341,6 @@ class TikTokNodeListener {
           timestamp: Date.now()
         };
 
-        // Forward to internal gift event API for 5s debounce & reward matching
         const port = process.env.PORT || '3005';
         const baseUrl = process.env.NEXT_BASE_URL || `http://127.0.0.1:${port}`;
         const listenerToken = process.env.TIKTOK_LISTENER_TOKEN;
@@ -362,7 +355,7 @@ class TikTokNodeListener {
           console.warn('[TikTokNodeListener] Failed to post gift to internal route:', err.message);
         });
 
-        console.log(`🎁 [TikTokNodeListener] Gift: '${giftName}' x${repeatCount} dari ${nickname} (@${uniqueId})`);
+        console.log(`?? [TikTokNodeListener] Gift: '${giftName}' x${repeatCount} dari ${nickname} (@${uniqueId})`);
       } catch (e) {
         console.error('[TikTokNodeListener] Error processing gift event:', e);
       }
@@ -471,7 +464,6 @@ class TikTokNodeListener {
   }
 }
 
-// Persist singleton instance across Next.js dev server hot-reloads and route evaluations
 const globalWithListener = global as typeof globalThis & {
   __tiktok_node_listener?: TikTokNodeListener;
 };
