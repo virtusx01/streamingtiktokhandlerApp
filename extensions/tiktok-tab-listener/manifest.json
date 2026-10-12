@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "TikTok LIVE Tab Listener",
+  "version": "1.0.0",
+  "description": "Forwards TikTok LIVE WebSocket events from an explicitly selected tab to the app.",
+  "permissions": ["activeTab", "debugger", "storage"],
+  "host_permissions": [
+    "https://www.tiktok.com/*",
+    "https://tiktoklistener.onrender.com/*",
+    "http://localhost:3005/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

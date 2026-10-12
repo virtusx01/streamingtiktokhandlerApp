@@ -99,6 +99,33 @@ LIVE connection. If the server receives the event but the widget stream does
 not, investigate the SSE connection/deployment. Do not share listener or ADB
 tokens when sharing logs.
 
+### Listening from an open TikTok LIVE tab
+
+The optional Chromium extension can forward incoming WebSocket frames from an
+already-open TikTok LIVE tab. It requires the same `TIKTOK_LISTENER_TOKEN`
+configured in the Render environment. Keep that token private; the extension
+saves it in Chrome local extension storage.
+
+1. Deploy the app with `TIKTOK_LISTENER_TOKEN` set, then open
+   `chrome://extensions` (or `edge://extensions`) and enable Developer mode.
+2. Choose **Load unpacked** and select
+   `extensions/tiktok-tab-listener` from this repository.
+3. Open the public LIVE page in a tab, for example
+   `https://www.tiktok.com/@username/live`.
+4. Open the extension popup, enter the app URL and the same
+   `TIKTOK_LISTENER_TOKEN` value configured on Render, then choose
+   **Simpan pengaturan** and **Mulai pada tab aktif**.
+5. Accept the browser's debugger permission prompt. The extension only attaches
+   to the active TikTok LIVE tab after you start it. Use **Hentikan** to detach.
+
+The extension forwards binary WebSocket frames to the app, where the
+`tiktok-live-connector` protobuf schemas decode them. Gift events continue
+through the normal reward aggregation and ADB action path. This depends on
+TikTok delivering the relevant events to the open page and the library schemas
+matching TikTok's current protocol; it is not an official TikTok API or a
+guaranteed workaround for TikTok-side restrictions. The extension does not
+read or export browser cookies.
+
 If ADB reports `SecurityException` mentioning `INJECT_EVENTS` for tap, swipe,
 or key events, Android has denied input injection even though USB debugging is
 connected. On devices that provide it, enable **USB debugging (Security

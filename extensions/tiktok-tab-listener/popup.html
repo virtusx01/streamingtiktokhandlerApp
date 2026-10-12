@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TikTok LIVE Tab Listener</title>
+    <style>
+      body { width: 320px; margin: 0; padding: 16px; color: #17202a; font: 14px Arial, sans-serif; }
+      h1 { margin: 0 0 12px; font-size: 17px; }
+      label { display: block; margin-top: 10px; font-weight: 600; }
+      input { box-sizing: border-box; width: 100%; margin-top: 5px; padding: 8px; }
+      button { margin-top: 12px; padding: 8px 12px; cursor: pointer; }
+      #status { min-height: 34px; margin-top: 12px; white-space: pre-wrap; }
+      .note { color: #59636e; font-size: 12px; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <h1>TikTok LIVE Tab Listener</h1>
+    <p class="note">Pilih tab TikTok LIVE yang sedang terbuka. Extension membaca frame WebSocket masuk saat listener aktif.</p>
+    <label for="appUrl">URL aplikasi</label>
+    <input id="appUrl" type="url" value="https://tiktoklistener.onrender.com">
+    <label for="token">TIKTOK_LISTENER_TOKEN</label>
+    <input id="token" type="password" autocomplete="off">
+    <button id="save">Simpan pengaturan</button>
+    <button id="start">Mulai pada tab aktif</button>
+    <button id="stop">Hentikan</button>
+    <div id="status" role="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
