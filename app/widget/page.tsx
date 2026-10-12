@@ -1292,7 +1292,7 @@ export default function WidgetPage() {
       <div ref={canvasRef} className="w-full h-full relative" onClick={() => showEditor && setSelectedId(null)}>
         {elements.map(el => {
              const state = getElementState(el, activeNotification?.type || settingsTab);
-             const isVisible = showEditor || (activeNotification && (isTypeEnabled(activeNotification.type) || activeNotification.isTest) && (!el.eventTypes || el.eventTypes.includes(activeNotification.type)));
+             const isVisible = showEditor || (!activeNotification ? true : (isTypeEnabled(activeNotification.type) || activeNotification.isTest) && (!el.eventTypes || el.eventTypes.includes(activeNotification.type)));
              return (
               <div key={el.id} onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, el.id, "move"); }} style={{ left: state.x, top: state.y, width: state.width, height: state.height, position: 'absolute', zIndex: 10, outline: (showEditor && selectedId === el.id) ? '2px solid #10b981' : 'none', opacity: isVisible ? 1 : 0, transition: 'opacity 0.4s ease-in-out' }}>
                 {el.type === "text" ? (
