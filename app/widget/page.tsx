@@ -332,6 +332,55 @@ export default function WidgetPage() {
 
   const fonts = ["Baloo 2", "Open Sans", "Inter", "Roboto", "Passion One"];
 
+  const createDefaultWidgetElements = (): Element[] => [
+    {
+      id: "default-gift-image",
+      type: "image",
+      x: 24,
+      y: 18,
+      width: 76,
+      height: 76,
+      content: "https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Rose.png",
+      style: {
+        objectFit: "contain",
+      },
+      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
+    },
+    {
+      id: "default-event-text",
+      type: "text",
+      x: 120,
+      y: 20,
+      width: 760,
+      height: 80,
+      content: "{nickname} {giftname}",
+      style: {
+        color: "#ffffff",
+        fontSize: 26,
+        fontWeight: "700",
+        fontStyle: "normal",
+        fontFamily: "Inter",
+        textAlign: "left",
+        strokeColor: "#000000",
+        strokeWidth: 2,
+      },
+      eventTypes: ["gift", "like", "comment", "join", "follow", "fan", "share"],
+    },
+  ];
+
+  const resolveSavedElements = useCallback((candidate?: unknown) => {
+    if (Array.isArray(candidate) && candidate.length > 0) return candidate as Element[];
+    return createDefaultWidgetElements();
+  }, []);
+
+  const ensureDefaultWidgetLayout = useCallback((nextElements?: Element[]) => {
+    setElements(prev => {
+      const base = resolveSavedElements(nextElements ?? prev);
+      if (prev.length > 0) return prev;
+      return base;
+    });
+  }, [resolveSavedElements]);
+
   // ==========================================
   // WATCHDOG TIMER (Auto-Recovery)
   // ==========================================
@@ -529,9 +578,17 @@ export default function WidgetPage() {
       if (localData) {
         const parsed = JSON.parse(localData);
         if (parsed.config) setConfig(prev => ({ ...DEFAULT_CONFIG, ...parsed.config }));
-        if (parsed.elements && Array.isArray(parsed.elements)) setElements(parsed.elements);
+        if (parsed.elements && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+          setElements(parsed.elements);
+        } else {
+          ensureDefaultWidgetLayout();
+        }
+      } else {
+        ensureDefaultWidgetLayout();
       }
-    } catch (e) {}
+    } catch (e) {
+      ensureDefaultWidgetLayout();
+    }
 
     try {
       const res = await fetch("/api/config");
@@ -595,9 +652,13 @@ export default function WidgetPage() {
           triggerRewardsEnabled: data.triggerRewardsEnabled ?? DEFAULT_CONFIG.triggerRewardsEnabled,
         };
         setConfig(serverConfig);
-        if (data.widgetConfig.elements) setElements(data.widgetConfig.elements);
+        if (Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0) {
+          setElements(data.widgetConfig.elements);
+        } else {
+          ensureDefaultWidgetLayout();
+        }
         if (data.rewards) setRewards(data.rewards);
-        saveToLocalStorage(serverConfig, data.widgetConfig.elements || []);
+        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : createDefaultWidgetElements());
       }
     } catch (err) {}
   };
