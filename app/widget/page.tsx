@@ -321,6 +321,7 @@ export default function WidgetPage() {
   const lastProcessTime = useRef<number>(Date.now());
   const watchdogInterval = useRef<NodeJS.Timeout | null>(null);
   const completedCombosRef = useRef<Set<string>>(new Set());
+  const recentGiftKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     configRef.current = config;
@@ -370,14 +371,16 @@ export default function WidgetPage() {
 
   const resolveSavedElements = useCallback((candidate?: unknown) => {
     if (Array.isArray(candidate) && candidate.length > 0) return candidate as Element[];
-    return createDefaultWidgetElements();
+    // Do not auto-inject a default layout. Respect explicit saved/custom elements only.
+    return [] as Element[];
   }, []);
 
   const ensureDefaultWidgetLayout = useCallback((nextElements?: Element[]) => {
     setElements(prev => {
-      const base = resolveSavedElements(nextElements ?? prev);
+      // Do not insert defaults automatically. If previous elements exist, keep them; otherwise, set to explicit nextElements or empty.
       if (prev.length > 0) return prev;
-      return base;
+      if (Array.isArray(nextElements) && nextElements.length > 0) return nextElements;
+      return [] as Element[];
     });
   }, [resolveSavedElements]);
 
@@ -473,16 +476,28 @@ export default function WidgetPage() {
     loadConfig();
     if (sseConnection.current) return;
 
-    const eventSource = new EventSource("/api/events");
-    sseConnection.current = eventSource;
-    eventSource.onopen = () => {
-      console.info("[Widget] Connected to live event stream.");
-    };
-    eventSource.onerror = () => {
-      console.error(`[Widget] Live event stream disconnected (readyState=${eventSource.readyState}); reconnecting.`);
-    };
-    
-    eventSource.onmessage = (event) => {
+    let reconnectTimer: number | null = null;
+    let backoff = 1000;
+    const connectSSE = (force = false) => {
+      if (sseConnection.current && !force) return;
+      const es = new EventSource("/api/events");
+      sseConnection.current = es;
+      es.onopen = () => {
+        console.info("[Widget] Connected to live event stream.");
+        backoff = 1000;
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      };
+      es.onerror = () => {
+        console.error(`[Widget] Live event stream error (readyState=${es.readyState}); attempting reconnect in ${backoff}ms.`);
+        try { es.close(); } catch (e) {}
+        sseConnection.current = null;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = window.setTimeout(() => {
+          backoff = Math.min(60000, Math.floor(backoff * 1.8));
+          connectSSE(true);
+        }, backoff);
+      };
+      es.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
         const data = payload.data || payload;
@@ -562,10 +577,8 @@ export default function WidgetPage() {
     };
 
     return () => {
-        if (sseConnection.current === eventSource) {
-           eventSource.close();
-           sseConnection.current = null;
-        }
+        try { if (sseConnection.current) { sseConnection.current.close(); sseConnection.current = null; } } catch (e) {}
+        if (typeof reconnectTimer !== 'undefined' && reconnectTimer) clearTimeout(reconnectTimer);
     };
   }, []);
 
@@ -581,13 +594,15 @@ export default function WidgetPage() {
         if (parsed.elements && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
           setElements(parsed.elements);
         } else {
-          ensureDefaultWidgetLayout();
+          // Do not auto-insert a default layout when no saved elements are present.
+          setElements([]);
         }
       } else {
-        ensureDefaultWidgetLayout();
+        // Respect explicit customization: start with no elements unless configured.
+        setElements([]);
       }
     } catch (e) {
-      ensureDefaultWidgetLayout();
+      setElements([]);
     }
 
     try {
@@ -655,10 +670,11 @@ export default function WidgetPage() {
         if (Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0) {
           setElements(data.widgetConfig.elements);
         } else {
-          ensureDefaultWidgetLayout();
+          // Do not insert default layout when server doesn't provide elements.
+          setElements([]);
         }
         if (data.rewards) setRewards(data.rewards);
-        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : createDefaultWidgetElements());
+        saveToLocalStorage(serverConfig, Array.isArray(data.widgetConfig?.elements) && data.widgetConfig.elements.length > 0 ? data.widgetConfig.elements : []);
       }
     } catch (err) {}
   };
@@ -781,6 +797,17 @@ export default function WidgetPage() {
 
     const queue = notificationQueue.current;
     // MERGE GIFTS (Same User + Same Gift)
+    // Prevent duplicate gift events when msgId is missing by using a short-lived composite key.
+    if (!requiresWidgetAck && type === 'gift' && !data.msgId) {
+        const key = `${data.username || data.nickname || 'anon'}::${data.giftName || data.namaHadiah || 'gift'}::${Math.floor((Number(data.timestamp || Date.now()))/5000)}`;
+        if (recentGiftKeys.current.has(key)) {
+            // Duplicate within short window — drop
+            return;
+        }
+        recentGiftKeys.current.add(key);
+        setTimeout(() => recentGiftKeys.current.delete(key), 5000);
+    }
+
     if (!requiresWidgetAck && type === 'gift' && data.msgId) {
         const existingIdx = queue.findIndex(q => q.type === 'gift' && q.username === data.username && q.msgId === data.msgId);
         if (existingIdx !== -1) {
