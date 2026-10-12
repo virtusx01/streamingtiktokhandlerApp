@@ -817,22 +817,9 @@ export default function Home() {
                     type="text" 
                     value={config.tiktokUsername}
                     onChange={(e) => setConfig({ ...config, tiktokUsername: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleSaveAndConnectUsername();
-                      }
-                    }}
                     className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-emerald-500/50 outline-none transition font-mono text-sm"
                     placeholder="e.g. @username"
                   />
-                  <button
-                    onClick={handleSaveAndConnectUsername}
-                    disabled={saving}
-                    className="px-4 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap"
-                    title="Simpan username dan hubungkan listener"
-                  >
-                    <Check size={14} /> Hubungkan
-                  </button>
                 </div>
                 {listenerDetail && (
                   <p className="text-[11px] text-neutral-400 mt-2 flex items-center gap-1.5 bg-neutral-950/70 p-2 rounded-lg border border-neutral-800/80">

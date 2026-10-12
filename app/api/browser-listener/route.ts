@@ -6,6 +6,7 @@ import {
 } from 'tiktok-live-connector';
 import {
   emitCommentEvent,
+  emitFanEvent,
   emitFollowEvent,
   emitJoinEvent,
   emitShareEvent,
@@ -27,7 +28,8 @@ const supportedMessageTypes = new Set([
   'WebcastMemberMessage',
   'WebcastGiftMessage',
   'WebcastLikeMessage',
-  'WebcastSocialMessage'
+  'WebcastSocialMessage',
+  'WebcastFansclubMessage'
 ]);
 
 function stringValue(value: unknown, fallback = ''): string {
@@ -138,6 +140,12 @@ async function processFrame(frameBase64: string, request: Request) {
       continue;
     }
 
+    if (message.type === 'WebcastFansclubMessage') {
+      const eventId = `fan_${messageId}`;
+      if (!isDuplicate(eventId, 5000)) emitFanEvent({ nickname, username: uniqueId, eventId });
+      continue;
+    }
+
     const displayType = stringValue(eventData.displayType).toLowerCase();
     const eventId = `social_${messageId}`;
     if (isDuplicate(eventId, 5000)) continue;
@@ -145,6 +153,8 @@ async function processFrame(frameBase64: string, request: Request) {
       emitFollowEvent({ nickname, username: uniqueId, eventId: `follow_${messageId}` });
     } else if (displayType.includes('share')) {
       emitShareEvent({ nickname, username: uniqueId, eventId: `share_${messageId}` });
+    } else if (displayType.includes('fan') || displayType.includes('club')) {
+      emitFanEvent({ nickname, username: uniqueId, eventId: `fan_${messageId}` });
     }
   }
 }

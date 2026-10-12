@@ -171,7 +171,7 @@ const DEFAULT_CONFIG: WidgetConfig = {
   likeThreshold: 100,
   giftEnabled: true,
   shareEnabled: true,
-  commentEnabled: false,
+  commentEnabled: true,
   giftImageUrl: "",
   commentImageUrl: "",
   likeImageUrl: "",
@@ -499,22 +499,22 @@ export default function WidgetPage() {
         }
  
         if (payload.type === 'like') {
-            if (data.isTest) {
-                addToQueue({ ...payload, isMilestone: true, likeCount: config.likeThreshold || 50 });
+            if (data.isTest || data.isMilestone) {
+                addToQueue({ ...payload, likeCount: data.likeCount || config.likeThreshold || 50 });
                 return;
             }
-            if (data.isMilestone) {
-                addToQueue(payload);
-            } else {
-                const currentTotal = data.likeCount || 0;
-                const threshold = config.likeThreshold || 100;
-                const milestone = Math.floor(currentTotal / threshold) * threshold;
-                if (milestone > 0 && milestone > lastLikeMilestone.current) {
-                    lastLikeMilestone.current = milestone;
-                    addToQueue({ ...payload, likeCount: milestone });
-                } else if (requiresWidgetAck) {
-                    acknowledgeWidgetNotification(widgetNotificationId);
-                }
+
+            const currentTotal = data.likeCount || 1;
+            const threshold = Math.max(1, config.likeThreshold || 50);
+            const milestone = Math.floor(currentTotal / threshold) * threshold;
+            if (milestone > 0 && milestone > lastLikeMilestone.current) {
+                lastLikeMilestone.current = milestone;
+                addToQueue({ ...payload, likeCount: milestone });
+            } else if (config.likeEnabled) {
+                // If like is enabled, display the like notification immediately
+                addToQueue({ ...payload, likeCount: currentTotal });
+            } else if (requiresWidgetAck) {
+                acknowledgeWidgetNotification(widgetNotificationId);
             }
             return;
         }
@@ -1173,24 +1173,50 @@ export default function WidgetPage() {
       <AudioStatus locked={audioLocked} onClick={() => audioContextRef.current?.resume().then(() => setAudioLocked(false))} />
       <audio ref={silentAudioRef} src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" loop autoPlay style={{ display: 'none' }} />
 
-      {activeNotification && notifVisible && (activeNotification.isTest || !hasConfiguredEventElement) && (
+      {activeNotification && notifVisible && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed left-1/2 top-8 z-30 flex min-w-[280px] max-w-[min(90vw,520px)] -translate-x-1/2 items-center gap-4 rounded-2xl border border-white/15 bg-neutral-950/90 px-5 py-4 text-white shadow-2xl backdrop-blur-md"
+          className="fixed left-1/2 top-8 z-30 flex min-w-[280px] max-w-[min(90vw,520px)] -translate-x-1/2 items-center gap-4 rounded-2xl border border-white/15 bg-neutral-950/90 px-5 py-4 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-300"
         >
           {activeNotification.type === "gift" && activeNotification.giftIcon ? (
             <img src={activeNotification.giftIcon} alt="" className="h-14 w-14 rounded-xl object-contain" />
+          ) : activeNotification.type === "like" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-red-500/20 text-red-400">
+              <Heart size={28} className="animate-pulse" />
+            </div>
+          ) : activeNotification.type === "comment" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-blue-500/20 text-blue-400">
+              <MessageSquare size={28} />
+            </div>
+          ) : activeNotification.type === "join" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400">
+              <UserPlus size={28} />
+            </div>
+          ) : activeNotification.type === "follow" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 text-indigo-400">
+              <UserPlus size={28} />
+            </div>
+          ) : activeNotification.type === "fan" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-purple-500/20 text-purple-400">
+              <Crown size={28} />
+            </div>
+          ) : activeNotification.type === "share" ? (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+              <Zap size={28} />
+            </div>
           ) : (
             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-pink-500/15 text-pink-300">
               <Gift size={28} />
             </div>
           )}
-          <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{activeNotification.nickname}</p>
-            <p className="truncate text-lg font-black">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold text-neutral-300">{activeNotification.nickname}</p>
+            <p className="truncate text-base font-black text-white">
               {activeNotification.type === "gift"
                 ? `${activeNotification.namaHadiah || activeNotification.giftName}${(activeNotification.repeatCount || 1) > 1 ? ` x${activeNotification.repeatCount}` : ""}`
+                : activeNotification.type === "comment"
+                ? (activeNotification.rawComment || activeNotification.message)
                 : activeNotification.message}
             </p>
           </div>
