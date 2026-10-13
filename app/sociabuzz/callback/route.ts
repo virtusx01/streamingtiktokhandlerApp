@@ -18,9 +18,10 @@ const CUSTOM_PAYLOAD_KEYS = new Set([
   'qty', 'traktir_item', 'message', 'uuid', 'recipient_id', 'user_id',
   'amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value',
   'currency', 'currency_code', 'currencyCode', 'full_name', 'fullName',
-  'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name',
-  'username', 'nickname', 'display_name', 'comment', 'supporter_message',
-  'supporterMessage', 'gifLink', 'mediaUrl', 'media_url', 'media',
+  'supporter', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name',
+  'username', 'nickname', 'display_name', 'sender', 'sender_name', 'senderName',
+  'from_name', 'fromName', 'comment', 'supporter_message', 'supporterMessage',
+  'gifLink', 'mediaUrl', 'media_url', 'media',
   'image_url', 'imageUrl', 'fromText', 'from_text', 'from_label_text',
   'quantity', 'gift_name', 'item', 'item_name', 'giftName', 'sound_url',
   'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
@@ -305,7 +306,7 @@ export async function POST(req: Request) {
     );
 
     const supporter = valueAsString(
-      firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']),
+      firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'sender_name', 'senderName', 'from_name', 'fromName', 'name', 'username', 'nickname', 'display_name', 'supporter', 'sender']),
       'Supporter',
       120,
     );
@@ -345,7 +346,7 @@ export async function POST(req: Request) {
 
     const rawAlert = {
       amount: formattedAmount,
-      supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']) ?? null,
+      supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'sender_name', 'senderName', 'from_name', 'fromName', 'name', 'username', 'nickname', 'display_name', 'supporter', 'sender']) ?? null,
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
       mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
       soundUrl: soundUrl || null,
