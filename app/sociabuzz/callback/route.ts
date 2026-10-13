@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { emitSociabuzzEvent } from '@/lib/events';
+import { publishSociabuzzEvent } from '@/lib/sociabuzz-events';
 import { getSetting, setSetting } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -331,16 +331,21 @@ export async function POST(req: Request) {
       payload: selectCustomPayload(parsedBody),
     };
 
-    emitSociabuzzEvent({
-      amount: formattedAmount,
-      supporter,
-      message,
-      mediaUrl,
-      soundUrl,
-      fromText,
-      raw: rawAlert,
-      timestamp: Date.now(),
-    });
+    try {
+      await publishSociabuzzEvent({
+        amount: formattedAmount,
+        supporter,
+        message,
+        mediaUrl,
+        soundUrl,
+        fromText,
+        raw: rawAlert,
+        timestamp: Date.now(),
+      });
+    } catch (eventError) {
+      console.error('[SociaBuzz] Failed to queue webhook donation:', eventError);
+      return NextResponse.json({ error: 'Gagal meneruskan notifikasi donasi ke widget.' }, { status: 503 });
+    }
     return NextResponse.json({ success: true }, { status: 202 });
   } catch (error) {
     console.error('[SociaBuzz] Invalid webhook payload:', error);

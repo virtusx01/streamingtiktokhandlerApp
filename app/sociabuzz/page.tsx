@@ -311,11 +311,6 @@ export default function SociabuzzPage() {
 
   const processAlertQueue = useCallback(async () => {
     if (processingAlertRef.current || alertQueueRef.current.length === 0) return;
-    if (!audioUnlockedRef.current) {
-      setAudioStatus('locked');
-      setAudioStatusMessage('Klik untuk mengaktifkan suara donasi');
-      return;
-    }
 
     processingAlertRef.current = true;
     const nextAlert = alertQueueRef.current.shift()!;
@@ -437,7 +432,7 @@ export default function SociabuzzPage() {
           raw: data.raw,
         };
         alertQueueRef.current.push(incomingAlert);
-        if (audioUnlockedRef.current) processAlertQueueRef.current();
+        processAlertQueueRef.current();
       } catch (parseError) {
         console.error('[SociaBuzz] Could not parse incoming event:', parseError);
       }

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents, subscribeToSociabuzzEvents } from '@/lib/events';
+import { subscribeToGiftEvents, subscribeToCommentEvents, subscribeToLikeEvents, subscribeToJoinEvents, subscribeToFollowEvents, subscribeToFanEvents, subscribeToShareEvents, subscribeToStatusEvents } from '@/lib/events';
 import { isAdminActionRequest } from '@/lib/adb-queue';
 import { prisma } from '@/lib/prisma';
 
@@ -8,6 +8,18 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   const isAdmin = await isAdminActionRequest(req);
+  let sociabuzzCursor: bigint;
+  try {
+    const latestEvent = await prisma.sociabuzzEvent.findFirst({
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    sociabuzzCursor = latestEvent?.id ?? BigInt(0);
+  } catch (error) {
+    console.error('[SSE] Failed to initialize SociaBuzz event cursor:', error);
+    return NextResponse.json({ error: 'SociaBuzz event stream is unavailable.' }, { status: 503 });
+  }
+
   const encoder = new TextEncoder();
   const { signal } = req;
 
@@ -17,6 +29,8 @@ export async function GET(req: Request) {
       console.log(`[SSE] NEW CLIENT CONNECTED: ${clientId}`);
       let isClosed = false;
       let keepAliveInterval: NodeJS.Timeout | null = null;
+      let sociabuzzPollInterval: NodeJS.Timeout | null = null;
+      let isPollingSociabuzz = false;
       const unsubscribers: (() => void)[] = [];
 
       const safeCleanup = () => {
@@ -31,6 +45,10 @@ export async function GET(req: Request) {
         if (keepAliveInterval) {
           clearInterval(keepAliveInterval);
           keepAliveInterval = null;
+        }
+        if (sociabuzzPollInterval) {
+          clearInterval(sociabuzzPollInterval);
+          sociabuzzPollInterval = null;
         }
 
         try {
@@ -76,7 +94,6 @@ export async function GET(req: Request) {
       unsubscribers.push(subscribeToFanEvents((data) => sendEvent('fan', data)));
       unsubscribers.push(subscribeToShareEvents((data) => sendEvent('share', data)));
       unsubscribers.push(subscribeToStatusEvents((data) => sendEvent('status', data)));
-      unsubscribers.push(subscribeToSociabuzzEvents((data) => sendEvent('sociabuzz', data)));
 
       void (async () => {
         try {
@@ -112,6 +129,26 @@ export async function GET(req: Request) {
           console.error('[SSE] Failed to replay pending ADB reward notifications:', error);
         }
       })();
+
+      sociabuzzPollInterval = setInterval(() => {
+        if (isClosed || isPollingSociabuzz) return;
+        isPollingSociabuzz = true;
+        void prisma.sociabuzzEvent.findMany({
+          where: { id: { gt: sociabuzzCursor } },
+          orderBy: { id: 'asc' },
+          take: 100,
+          select: { id: true, data: true },
+        }).then(events => {
+          for (const event of events) {
+            sendEvent('sociabuzz', event.data);
+            sociabuzzCursor = event.id;
+          }
+        }).catch(error => {
+          console.error('[SSE] Failed to poll persisted SociaBuzz events:', error);
+        }).finally(() => {
+          isPollingSociabuzz = false;
+        });
+      }, 1000);
 
       // Keep-alive heartbeat (10s for better browser persistence)
       keepAliveInterval = setInterval(() => {

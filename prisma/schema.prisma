@@ -30,3 +30,12 @@ model AdbAgent {
 
   @@map("adb_agents")
 }
+
+model SociabuzzEvent {
+  id        BigInt   @id @default(autoincrement())
+  data      Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("sociabuzz_events")
+}
