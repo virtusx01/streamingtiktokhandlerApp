@@ -85,10 +85,25 @@ function renderHtml(template: string, alert: AlertData) {
   });
 }
 
-function createDocument(html: string, css: string, javascript: string, rawData: AlertData['raw']) {
+function createDocument(html: string, css: string, javascript: string, alert: AlertData, soundUrl: string) {
   const safeCss = css.replace(/<\/style/gi, '<\\/style');
-  const safeJavascript = javascript.replace(/<\/script/gi, '<\\/script');
-  const safeRawData = JSON.stringify(rawData ?? null)
+  const safeSoundValue = JSON.stringify(soundUrl)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  const resolvedJavascript = javascript.replace(/\{\{\s*sound\s*\}\}/g, safeSoundValue);
+  const safeJavascript = resolvedJavascript.replace(/<\/script/gi, '<\\/script');
+  const safeRawData = JSON.stringify({
+    ...(alert.raw ?? {}),
+    amount: alert.amount,
+    supporter: alert.supporter,
+    message: alert.message,
+    mediaUrl: alert.mediaUrl,
+    soundUrl: alert.soundUrl ?? null,
+    fromText: alert.fromText ?? 'mengirim',
+    sound: soundUrl,
+    payload: alert.raw?.payload ?? null,
+  })
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
@@ -335,12 +350,15 @@ export default function SociabuzzPage() {
     processingAlertRef.current = true;
     const nextAlert = alertQueueRef.current.shift()!;
     const currentConfig = configRef.current;
+    const scriptHandlesSound = currentConfig.mode === 'custom' && /\{\{\s*sound\s*\}\}/.test(currentConfig.javascript);
     const mediaAudioUrl = /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(nextAlert.mediaUrl)
       ? nextAlert.mediaUrl
       : undefined;
-    const soundUrl = currentConfig.useCustomSound
-      ? currentConfig.customSoundUrl
-      : nextAlert.soundUrl || mediaAudioUrl;
+    const soundUrl = scriptHandlesSound
+      ? undefined
+      : currentConfig.useCustomSound
+        ? currentConfig.customSoundUrl
+        : nextAlert.soundUrl || mediaAudioUrl;
     const preparedAudioPromise = soundUrl
       ? prepareAlertAudio(soundUrl).then(audio => audio).catch(audioError => {
           console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
@@ -351,7 +369,7 @@ export default function SociabuzzPage() {
       : Promise.resolve(null);
     let soundFailed = false;
 
-    if (!soundUrl && currentConfig.useCustomSound) {
+    if (!soundUrl && currentConfig.useCustomSound && !scriptHandlesSound) {
       soundFailed = true;
       setAudioStatus('error');
       setAudioStatusMessage('Suara custom aktif tetapi file belum dipilih');
@@ -373,7 +391,7 @@ export default function SociabuzzPage() {
         const playedToEnd = await playPreparedAudio(preparedAudio);
         if (!playedToEnd) soundFailed = true;
       });
-    } else if (!currentConfig.useCustomSound) {
+    } else if (!currentConfig.useCustomSound && !scriptHandlesSound) {
       setAudioStatus('playing');
       setAudioStatusMessage('Suara donasi sedang diputar');
       setAudioProgress(0);
@@ -481,6 +499,8 @@ export default function SociabuzzPage() {
     const template = config.mode === 'custom' ? config.html : DEFAULT_HTML;
     const css = config.mode === 'custom' ? config.css : DEFAULT_CSS;
     const javascript = config.mode === 'custom' ? config.javascript : '';
+    const scriptHandlesSound = config.mode === 'custom' && /\{\{\s*sound\s*\}\}/.test(javascript);
+    const selectedSoundUrl = config.useCustomSound ? config.customSoundUrl : '';
     const templateData = config.mode === 'custom' && alert.raw
       ? {
           ...alert,
@@ -491,8 +511,14 @@ export default function SociabuzzPage() {
           fromText: alert.raw.fromText == null ? alert.fromText : String(alert.raw.fromText),
         }
       : alert;
-    return createDocument(renderHtml(template, templateData), css, javascript, alert.raw);
-  }, [alert, config.css, config.html, config.javascript, config.mode]);
+    return createDocument(
+      renderHtml(template, templateData),
+      css,
+      javascript,
+      alert,
+      scriptHandlesSound ? selectedSoundUrl : '',
+    );
+  }, [alert, config.css, config.html, config.javascript, config.mode, config.useCustomSound, config.customSoundUrl]);
 
   const copyDefaultToCustom = () => {
     setConfig((current) => ({
@@ -750,11 +776,11 @@ export default function SociabuzzPage() {
                       onChange={(event) => setConfig((current) => ({ ...current, javascript: event.target.value }))}
                       rows={8}
                       spellCheck={false}
-                      placeholder={'// Data tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// amount sudah menyertakan mata uang jika tersedia, misalnya MYR2.44.\n// Payload asli tersedia di payload.real_amount, payload.real_currency, dll.\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
+                      placeholder={'// Data tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// {{sound}} menjadi URL suara custom atau "" jika suara tidak dipilih.\nconst soundUrl = {{sound}};\nif (soundUrl) new Audio(soundUrl).play().catch(console.error);\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Data tersedia di <code>window.sociabuzz</code> dan <code>window.sociabuzzData</code>: <code>amount</code> berformat mata uang bila tersedia, <code>supporter</code>, <code>message</code>, serta <code>payload</code> asli yang sudah menghapus field token/kontak. JS terisolasi dan tidak dapat mengakses halaman utama; koneksi script seperti fetch/XHR diblokir. Gambar/media eksternal tetap diizinkan. Jalankan hanya kode yang kamu percaya.
+                      <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Contoh: <code>{'const soundUrl = {{sound}}; if (soundUrl) { new Audio(soundUrl).play().catch(console.error); }'}</code>. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>
