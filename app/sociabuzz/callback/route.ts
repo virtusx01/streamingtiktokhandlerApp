@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { publishSociabuzzEvent } from '@/lib/sociabuzz-events';
+import { formatSociabuzzAmount } from '@/lib/sociabuzz-amount';
 import { getSetting, setSetting } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -89,6 +90,21 @@ export async function GET() {
 
 function objectOrEmpty(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
+}
+
+function collectNestedObjects(value: unknown, depth = 0, result: JsonObject[] = []): JsonObject[] {
+  if (depth > 6 || result.length >= 64 || !value || typeof value !== 'object') return result;
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 16)) collectNestedObjects(item, depth + 1, result);
+    return result;
+  }
+
+  result.push(value as JsonObject);
+  for (const item of Object.values(value as JsonObject)) {
+    collectNestedObjects(item, depth + 1, result);
+    if (result.length >= 64) break;
+  }
+  return result;
 }
 
 function firstValue(objects: JsonObject[], keys: string[]): unknown {
@@ -216,9 +232,12 @@ function isLegacyHashMatch(presentedToken: string, expectedHash: unknown): boole
 }
 
 export async function POST(req: Request) {
-  const expectedToken = process.env.SOCIABUZZ_WEBHOOK_TOKEN || getSetting('sociabuzzWebhookToken', '');
+  const expectedTokens = [...new Set([
+    process.env.SOCIABUZZ_WEBHOOK_TOKEN,
+    getSetting('sociabuzzWebhookToken', ''),
+  ].filter((token): token is string => typeof token === 'string' && token.length > 0))];
   const legacyTokenHash = getSetting('sociabuzzWebhookTokenHash', '');
-  if (!expectedToken && !legacyTokenHash) {
+  if (expectedTokens.length === 0 && !legacyTokenHash) {
     return NextResponse.json({ error: 'Webhook SociaBuzz belum dikonfigurasi oleh admin.' }, { status: 503 });
   }
 
@@ -244,7 +263,7 @@ export async function POST(req: Request) {
 
     const tokenCandidates = getPresentedTokenCandidates(req, parsedBody);
     const isValid = tokenCandidates.some(candidate =>
-      (expectedToken && tokenMatches(candidate, expectedToken)) ||
+      expectedTokens.some(expectedToken => tokenMatches(candidate, expectedToken)) ||
       (legacyTokenHash && isLegacyHashMatch(candidate, legacyTokenHash))
     );
     if (!isValid) {
@@ -262,25 +281,28 @@ export async function POST(req: Request) {
     const supporterData = objectOrEmpty(root.supporter);
     const amountData = objectOrEmpty(root.amount);
     const donationAmountData = objectOrEmpty(donation.amount);
-    const objects = [root, data, donation, event, supporterData, amountData, donationAmountData];
+    const objects = [...new Set([
+      root,
+      data,
+      donation,
+      event,
+      supporterData,
+      amountData,
+      donationAmountData,
+      ...collectNestedObjects(root),
+    ])];
 
     const realAmount = firstValue(objects, ['real_amount', 'amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']);
     const realCurrency = firstValue(objects, ['real_currency', 'currency', 'currency_code', 'currencyCode']);
     const qty = firstValue(objects, ['qty', 'quantity']);
     const traktirItem = firstValue(objects, ['traktir_item', 'gift_name', 'item', 'item_name', 'giftName']);
-    const amountText = typeof realAmount === 'undefined' ? '' : String(realAmount).trim();
-    const currencyText = typeof realCurrency === 'string' ? realCurrency.trim() : '';
-    const formattedAmount =
-      typeof traktirItem === 'string' && traktirItem.trim() && typeof qty !== 'undefined'
-        ? `${String(qty).trim()} ${traktirItem.trim()}`
-        :
-          currencyText && amountText
-            ? amountText.toUpperCase().startsWith(currencyText.toUpperCase())
-              ? amountText
-              : `${currencyText}${amountText}`
-            : amountText
-              ? amountText
-              : valueAsString(firstValue(objects, ['amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']), '0', 80);
+    const formattedAmount = formatSociabuzzAmount(
+      realAmount,
+      realCurrency,
+      qty,
+      traktirItem,
+      firstValue(objects, ['amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']),
+    );
 
     const supporter = valueAsString(
       firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']),
@@ -313,7 +335,7 @@ export async function POST(req: Request) {
     const logEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       receivedAt,
-      eventType: valueAsString(root.message, 'unknown', 80),
+      eventType: valueAsString(firstValue(objects, ['event_type', 'eventType', 'type', 'action']), 'donation', 80),
       payloadFields: summarizePayload(parsedBody),
       mapped: { amount: formattedAmount, supporter, message, mediaUrl, soundUrl, fromText },
     };

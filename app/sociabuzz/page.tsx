@@ -341,21 +341,15 @@ export default function SociabuzzPage() {
     const soundUrl = currentConfig.useCustomSound
       ? currentConfig.customSoundUrl
       : nextAlert.soundUrl || mediaAudioUrl;
-    let preparedAudio: HTMLAudioElement | null = null;
+    const preparedAudioPromise = soundUrl
+      ? prepareAlertAudio(soundUrl).then(audio => audio).catch(audioError => {
+          console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
+          setAudioStatus('error');
+          setAudioStatusMessage(audioError instanceof Error ? audioError.message : 'File suara gagal dimuat');
+          return null;
+        })
+      : Promise.resolve(null);
     let soundFailed = false;
-
-    if (soundUrl) {
-      try {
-        preparedAudio = await prepareAlertAudio(soundUrl);
-        setAudioStatus('ready');
-        setAudioStatusMessage('Suara siap — menampilkan notifikasi');
-      } catch (audioError) {
-        soundFailed = true;
-        console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
-        setAudioStatus('error');
-        setAudioStatusMessage(audioError instanceof Error ? audioError.message : 'File suara gagal dimuat');
-      }
-    }
 
     if (!soundUrl && currentConfig.useCustomSound) {
       soundFailed = true;
@@ -368,8 +362,15 @@ export default function SociabuzzPage() {
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
     let soundPlayback: Promise<void>;
-    if (preparedAudio) {
-      soundPlayback = playPreparedAudio(preparedAudio).then(playedToEnd => {
+    if (soundUrl) {
+      soundPlayback = preparedAudioPromise.then(async preparedAudio => {
+        if (!preparedAudio) {
+          soundFailed = true;
+          return;
+        }
+        setAudioStatus('ready');
+        setAudioStatusMessage('Suara siap — notifikasi sedang tampil');
+        const playedToEnd = await playPreparedAudio(preparedAudio);
         if (!playedToEnd) soundFailed = true;
       });
     } else if (!currentConfig.useCustomSound) {
@@ -391,27 +392,33 @@ export default function SociabuzzPage() {
       soundPlayback = Promise.resolve();
     }
 
-    const minimumVisibleTime = new Promise<void>(resolve => {
-      alertTimerRef.current = window.setTimeout(resolve, currentConfig.durationMs);
-    });
-    await Promise.all([soundPlayback, minimumVisibleTime]);
-    if (alertTimerRef.current !== null) {
-      window.clearTimeout(alertTimerRef.current);
-      alertTimerRef.current = null;
+    try {
+      const minimumVisibleTime = new Promise<void>(resolve => {
+        alertTimerRef.current = window.setTimeout(resolve, currentConfig.durationMs);
+      });
+      await Promise.all([soundPlayback, minimumVisibleTime]);
+    } catch (queueError) {
+      soundFailed = true;
+      console.error('[SociaBuzz] Alert playback failed:', queueError);
+    } finally {
+      if (alertTimerRef.current !== null) {
+        window.clearTimeout(alertTimerRef.current);
+        alertTimerRef.current = null;
+      }
+      setVisible(false);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current = null;
+      }
+      setAudioProgress(null);
+      if (!soundFailed && audioUnlockedRef.current) {
+        setAudioStatus('ready');
+        setAudioStatusMessage('Audio siap');
+      }
+      processingAlertRef.current = false;
+      if (alertQueueRef.current.length > 0) void processAlertQueue();
     }
-    setVisible(false);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
-    }
-    setAudioProgress(null);
-    if (!soundFailed && audioUnlockedRef.current) {
-      setAudioStatus('ready');
-      setAudioStatusMessage('Audio siap');
-    }
-    processingAlertRef.current = false;
-    if (alertQueueRef.current.length > 0) void processAlertQueue();
   }, [playDefaultAlertSound, playPreparedAudio, prepareAlertAudio]);
 
   useEffect(() => {
