@@ -304,8 +304,11 @@ export default function WidgetPage() {
   const interruptFlag = useRef(false);
   const activeNotificationRef = useRef<NotificationItem | null>(null);
   const [audioLocked, setAudioLocked] = useState(true);
+  const [audioProgress, setAudioProgress] = useState<{ phase: "opening" | "tts"; percentage: number } | null>(null);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
   const browserVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const openingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const stopOpeningAudioRef = useRef<(() => void) | null>(null);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const elementsRef = useRef<Element[]>([]);
@@ -345,8 +348,8 @@ export default function WidgetPage() {
     watchdogInterval.current = setInterval(() => {
         if (isProcessingQueue.current) {
             const timeSinceLastUpdate = Date.now() - lastProcessTime.current;
-            if (timeSinceLastUpdate > 30000) { // 30 seconds stuck
-                console.warn("⚠️ [WATCHDOG] Queue stuck for 30s. Force resetting...");
+            if (timeSinceLastUpdate > 120000) {
+                console.warn("⚠️ [WATCHDOG] Queue made no progress for 120s. Force resetting...");
                 const notificationId = activeNotificationRef.current?.widgetNotificationId;
                 isProcessingQueue.current = false;
                 setNotifVisible(false);
@@ -836,6 +839,7 @@ export default function WidgetPage() {
   const interruptIfLowPriority = () => {
     const current = activeNotificationRef.current;
     if (current && current.priority < 2) {
+        stopOpeningAudioRef.current?.();
         if (window.speechSynthesis) window.speechSynthesis.cancel();
         interruptFlag.current = true;
     }
@@ -873,10 +877,16 @@ export default function WidgetPage() {
     utterance.rate = Math.min(2, Math.max(0.5, rate));
 
     let settled = false;
+    const updateProgress = (percentage: number) => {
+      lastProcessTime.current = Date.now();
+      setAudioProgress({ phase: "tts", percentage: Math.min(100, Math.max(0, percentage)) });
+    };
+    updateProgress(0);
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      setAudioProgress(null);
       resolve();
     };
     const timeout = window.setTimeout(() => {
@@ -885,7 +895,13 @@ export default function WidgetPage() {
       finish();
     }, Math.min(30000, Math.max(5000, text.length * 180 / utterance.rate)));
 
-    utterance.onend = finish;
+    utterance.onboundary = event => {
+      if (text.length > 0) updateProgress((event.charIndex / text.length) * 100);
+    };
+    utterance.onend = () => {
+      updateProgress(100);
+      finish();
+    };
     utterance.onerror = event => {
       console.error("[Widget] Browser TTS playback failed:", event.error);
       finish();
@@ -896,6 +912,62 @@ export default function WidgetPage() {
       console.error("[Widget] Browser rejected the TTS request:", error);
       finish();
     }
+  });
+
+  const playSound = (url: string) => new Promise<boolean>(resolve => {
+    const audio = new Audio(url);
+    openingAudioRef.current = audio;
+    let settled = false;
+    const finish = (playedToEnd: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      audio.removeEventListener("timeupdate", updateProgress);
+      audio.removeEventListener("loadedmetadata", updateProgress);
+      audio.onended = null;
+      audio.onerror = null;
+      audio.onabort = null;
+      if (openingAudioRef.current === audio) openingAudioRef.current = null;
+      if (stopOpeningAudioRef.current === stop) stopOpeningAudioRef.current = null;
+      setAudioProgress(null);
+      resolve(playedToEnd);
+    };
+    const updateProgress = () => {
+      lastProcessTime.current = Date.now();
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setAudioProgress({
+          phase: "opening",
+          percentage: Math.min(100, Math.max(0, (audio.currentTime / audio.duration) * 100)),
+        });
+      }
+    };
+    const stop = () => {
+      audio.pause();
+      finish(false);
+    };
+    const timeout = window.setTimeout(() => {
+      console.warn("[Widget] Opening sound reached the 60-second playback limit; stopping it.");
+      audio.pause();
+      finish(false);
+    }, 60000);
+
+    stopOpeningAudioRef.current = stop;
+    setAudioProgress({ phase: "opening", percentage: 0 });
+    audio.addEventListener("timeupdate", updateProgress);
+    audio.addEventListener("loadedmetadata", updateProgress);
+    audio.onended = () => {
+      setAudioProgress({ phase: "opening", percentage: 100 });
+      finish(true);
+    };
+    audio.onerror = () => {
+      console.error(`[Widget] Opening sound failed to load or play: ${url}`);
+      finish(false);
+    };
+    audio.onabort = () => finish(false);
+    audio.play().catch(error => {
+      console.error("[Widget] Browser rejected opening sound playback:", error);
+      finish(false);
+    });
   });
 
   const processQueue = async () => {
@@ -952,10 +1024,7 @@ export default function WidgetPage() {
     else if (type === "share") soundUrl = cfg.shareOpeningSoundUrl;
 
     if (soundUrl && !skipMusic && !interruptFlag.current) {
-        await Promise.race([
-            playSound(soundUrl),
-            new Promise(r => setTimeout(r, 15000)) // Safety timeout
-        ]);
+        await playSound(soundUrl);
     }
 
     // Browser TTS runs locally and does not request generated audio from the server.
@@ -985,16 +1054,6 @@ export default function WidgetPage() {
         isProcessingQueue.current = false;
         processQueue();
     }, 400);
-  };
-
-  const playSound = (url: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const audio = new Audio(url);
-      audio.onended = () => resolve(true);
-      audio.onerror = () => resolve(true);
-      audio.play().catch(() => resolve(true));
-      setTimeout(() => resolve(true), 12000);
-    });
   };
 
   const getElementState = (el: Element, type?: string) => {
@@ -1221,6 +1280,17 @@ export default function WidgetPage() {
             {showSettings && (
                 <div className="absolute top-20 right-4 w-[340px] z-50 bg-neutral-950/90 backdrop-blur-2xl border border-white/10 p-5 rounded-[2rem] max-h-[80vh] overflow-y-auto">
                     <div className="flex items-center justify-between mb-6"><h3 className="text-xs font-black text-emerald-500 tracking-[0.2em] flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />WIDGET CORE</h3><button onClick={() => setShowSettings(false)} className="text-neutral-600 hover:text-white transition"><X size={16} /></button></div>
+                    {audioProgress && (
+                      <div className="mb-5 rounded-xl border border-emerald-500/15 bg-emerald-500/5 p-3" role="status" aria-live="polite">
+                        <div className="mb-2 flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                          <span>{audioProgress.phase === "opening" ? "Suara notifikasi sedang diputar" : "TTS sedang dibacakan"}</span>
+                          <span>{Math.round(audioProgress.percentage)}%</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                          <div className="h-full rounded-full bg-emerald-400 transition-[width] duration-200" style={{ width: `${audioProgress.percentage}%` }} />
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2 mb-6 p-2 bg-neutral-900/30 rounded-3xl border border-white/5">
                       {[
                         { id: "gift", icon: <Gift size={16} />, color: "text-pink-400", label: "Gift" }, { id: "comment", icon: <MessageSquare size={16} />, color: "text-blue-400", label: "Chat" }, { id: "like", icon: <Heart size={16} />, color: "text-red-400", label: "Like" }, { id: "join", icon: <UserPlus size={16} />, color: "text-amber-400", label: "Join" }, { id: "follow", icon: <UserPlus size={16} />, color: "text-indigo-400", label: "Follow" }, { id: "fan", icon: <Crown size={16} />, color: "text-purple-400", label: "Fan" }, { id: "share", icon: <Zap size={16} />, color: "text-emerald-400", label: "Share" },
