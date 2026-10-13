@@ -268,14 +268,18 @@ export async function POST(req: Request) {
     const realCurrency = firstValue(objects, ['real_currency', 'currency', 'currency_code', 'currencyCode']);
     const qty = firstValue(objects, ['qty', 'quantity']);
     const traktirItem = firstValue(objects, ['traktir_item', 'gift_name', 'item', 'item_name', 'giftName']);
+    const amountText = typeof realAmount === 'undefined' ? '' : String(realAmount).trim();
+    const currencyText = typeof realCurrency === 'string' ? realCurrency.trim() : '';
     const formattedAmount =
       typeof traktirItem === 'string' && traktirItem.trim() && typeof qty !== 'undefined'
         ? `${String(qty).trim()} ${traktirItem.trim()}`
         :
-          typeof realCurrency === 'string' && realCurrency.trim() && typeof realAmount !== 'undefined'
-            ? `${realCurrency.trim()}${String(realAmount).trim()}`
-            : typeof realAmount !== 'undefined'
-              ? String(realAmount).trim()
+          currencyText && amountText
+            ? amountText.toUpperCase().startsWith(currencyText.toUpperCase())
+              ? amountText
+              : `${currencyText}${amountText}`
+            : amountText
+              ? amountText
               : valueAsString(firstValue(objects, ['amount', 'amount_value', 'nominal', 'donation_amount', 'total', 'value']), '0', 80);
 
     const supporter = valueAsString(
@@ -318,7 +322,7 @@ export async function POST(req: Request) {
     setSetting(WEBHOOK_LOGS_KEY, [logEntry, ...logs].slice(0, MAX_WEBHOOK_LOGS));
 
     const rawAlert = {
-      amount: realAmount ?? null,
+      amount: formattedAmount,
       supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'name', 'username', 'nickname', 'display_name']) ?? null,
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
       mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,

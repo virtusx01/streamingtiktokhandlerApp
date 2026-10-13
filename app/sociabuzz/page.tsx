@@ -462,7 +462,6 @@ export default function SociabuzzPage() {
     const templateData = config.mode === 'custom' && alert.raw
       ? {
           ...alert,
-          amount: alert.raw.amount == null ? alert.amount : String(alert.raw.amount),
           supporter: alert.raw.supporter == null ? alert.supporter : String(alert.raw.supporter),
           message: alert.raw.message == null ? alert.message : String(alert.raw.message),
           mediaUrl: alert.raw.mediaUrl == null ? alert.mediaUrl : String(alert.raw.mediaUrl),
@@ -704,7 +703,7 @@ export default function SociabuzzPage() {
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-emerald-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-slate-400">
-                        Placeholder di mode custom memakai nilai mentah: <code>{'{{supporter}}'}</code>, <code>{'{{amount}}'}</code>, <code>{'{{message}}'}</code>, <code>{'{{mediaUrl}}'}</code>, <code>{'{{fromText}}'}</code>. Misalnya amount berupa <code>1000</code>, tanpa format mata uang default.
+                        Placeholder <code>{'{{amount}}'}</code> menyertakan mata uang jika tersedia, misalnya <code>MYR2.44</code> atau <code>IDR3000</code>. Payload asli tetap tersedia di <code>window.sociabuzz.payload</code>.
                     </p>
                   </div>
 
@@ -728,11 +727,11 @@ export default function SociabuzzPage() {
                       onChange={(event) => setConfig((current) => ({ ...current, javascript: event.target.value }))}
                       rows={8}
                       spellCheck={false}
-                      placeholder={'// Data mentah tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// Nilai asli SociaBuzz, misalnya:\n// payload.real_amount, payload.fullname, payload.note\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(payload.real_amount ?? amount ?? "");'}
+                      placeholder={'// Data tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// amount sudah menyertakan mata uang jika tersedia, misalnya MYR2.44.\n// Payload asli tersedia di payload.real_amount, payload.real_currency, dll.\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Data tersedia di <code>window.sociabuzz</code> dan <code>window.sociabuzzData</code>: <code>amount</code>, <code>supporter</code>, <code>message</code>, dan <code>payload</code> mentah yang sudah menghapus field token/kontak. JS terisolasi dan tidak dapat mengakses halaman utama; koneksi script seperti fetch/XHR diblokir. Gambar/media eksternal tetap diizinkan. Jalankan hanya kode yang kamu percaya.
+                      Data tersedia di <code>window.sociabuzz</code> dan <code>window.sociabuzzData</code>: <code>amount</code> berformat mata uang bila tersedia, <code>supporter</code>, <code>message</code>, serta <code>payload</code> asli yang sudah menghapus field token/kontak. JS terisolasi dan tidak dapat mengakses halaman utama; koneksi script seperti fetch/XHR diblokir. Gambar/media eksternal tetap diizinkan. Jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>
