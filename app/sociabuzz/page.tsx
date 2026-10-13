@@ -125,7 +125,7 @@ export default function SociabuzzPage() {
   const [uploadingCustomSound, setUploadingCustomSound] = useState(false);
   const [audioStatus, setAudioStatus] = useState<AudioStatus>('locked');
   const [audioProgress, setAudioProgress] = useState<number | null>(null);
-  const [audioStatusMessage, setAudioStatusMessage] = useState('Klik untuk mengaktifkan suara donasi');
+  const [audioStatusMessage, setAudioStatusMessage] = useState('Mencoba mengaktifkan suara otomatis...');
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
@@ -171,16 +171,36 @@ export default function SociabuzzPage() {
           processAlertQueueRef.current();
         })
         .catch((audioError: unknown) => {
+          if (audioError instanceof DOMException && audioError.name === 'NotAllowedError') {
+            setAudioStatus('locked');
+            setAudioStatusMessage('Browser menunggu sentuhan pertama untuk mengizinkan audio');
+            return;
+          }
           console.error('[SociaBuzz] Audio could not be enabled:', audioError);
           setAudioStatus('error');
-          setAudioStatusMessage('Audio gagal diaktifkan — klik untuk mencoba lagi');
+          setAudioStatusMessage('Audio gagal diaktifkan — sentuh layar untuk mencoba lagi');
         });
     } catch (audioError) {
       console.error('[SociaBuzz] Audio could not be initialized:', audioError);
       setAudioStatus('error');
-      setAudioStatusMessage('Audio gagal diaktifkan — klik untuk mencoba lagi');
+      setAudioStatusMessage('Audio gagal diaktifkan — sentuh layar untuk mencoba lagi');
     }
   }, [getAudioContext]);
+
+  useEffect(() => {
+    const unlockFromGesture = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('[data-audio-unlock]')) return;
+      unlockAudio();
+    };
+
+    unlockAudio();
+    document.addEventListener('pointerdown', unlockFromGesture, { capture: true, once: true });
+    document.addEventListener('keydown', unlockFromGesture, { capture: true, once: true });
+    return () => {
+      document.removeEventListener('pointerdown', unlockFromGesture, true);
+      document.removeEventListener('keydown', unlockFromGesture, true);
+    };
+  }, [unlockAudio]);
 
   const playDefaultAlertSound = useCallback(async () => {
     const context = getAudioContext();
@@ -615,6 +635,7 @@ export default function SociabuzzPage() {
         <button
           type="button"
           onClick={unlockAudio}
+          data-audio-unlock
           aria-label={audioStatusMessage}
           className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold shadow-lg backdrop-blur ${
             audioStatus === 'error'
