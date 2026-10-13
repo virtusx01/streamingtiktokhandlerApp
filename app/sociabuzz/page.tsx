@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { buildSociaBuzzSpeechText, cancelSociaBuzzSpeech, speakSociaBuzzAlert } from '@/lib/sociabuzz-tts';
 
 type AlertConfig = {
   mode: 'default' | 'custom';
@@ -40,7 +41,7 @@ type WebhookLog = {
   mapped: AlertData;
 };
 
-type AudioStatus = 'locked' | 'ready' | 'checking' | 'playing' | 'error';
+type AudioStatus = 'locked' | 'ready' | 'checking' | 'playing' | 'speaking' | 'error';
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
@@ -111,6 +112,25 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'">
     <style>${safeCss}</style></head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
+    <script>(() => {
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function(...args) {
+        if (!(this instanceof HTMLAudioElement)) return originalPlay.apply(this, args);
+        window.parent.postMessage({ type: 'sociabuzz:sound-start' }, '*');
+        const finish = () => window.parent.postMessage({ type: 'sociabuzz:sound-end' }, '*');
+        let playback;
+        try {
+          playback = originalPlay.apply(this, args);
+        } catch (error) {
+          finish();
+          throw error;
+        }
+        this.addEventListener('ended', finish, { once: true });
+        this.addEventListener('error', finish, { once: true });
+        playback.catch(finish);
+        return playback;
+      };
+    })();</script>
     <script>${safeJavascript}</script></body></html>`;
 }
 
@@ -143,6 +163,7 @@ export default function SociabuzzPage() {
   const [audioStatusMessage, setAudioStatusMessage] = useState('Mencoba mengaktifkan suara otomatis...');
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const alertFrameRef = useRef<HTMLIFrameElement>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
   const configRef = useRef(config);
   const audioUnlockedRef = useRef(false);
@@ -150,6 +171,12 @@ export default function SociabuzzPage() {
   const processingAlertRef = useRef(false);
   const processAlertQueueRef = useRef<() => void>(() => {});
   const alertTimerRef = useRef<number | null>(null);
+  const scriptSoundTrackerRef = useRef<{
+    started: boolean;
+    resolve: () => void;
+    startTimeout: number;
+    playbackTimeout: number;
+  } | null>(null);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
@@ -351,6 +378,7 @@ export default function SociabuzzPage() {
     const nextAlert = alertQueueRef.current.shift()!;
     const currentConfig = configRef.current;
     const scriptHandlesSound = currentConfig.mode === 'custom' && /\{\{\s*sound\s*\}\}/.test(currentConfig.javascript);
+    const scriptSoundSelected = scriptHandlesSound && currentConfig.useCustomSound && Boolean(currentConfig.customSoundUrl);
     const mediaAudioUrl = /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(nextAlert.mediaUrl)
       ? nextAlert.mediaUrl
       : undefined;
@@ -359,6 +387,21 @@ export default function SociabuzzPage() {
       : currentConfig.useCustomSound
         ? currentConfig.customSoundUrl
         : nextAlert.soundUrl || mediaAudioUrl;
+    const scriptSoundPlayback = scriptSoundSelected
+      ? new Promise<void>(resolve => {
+          const finish = () => {
+            const tracker = scriptSoundTrackerRef.current;
+            if (!tracker) return;
+            window.clearTimeout(tracker.startTimeout);
+            window.clearTimeout(tracker.playbackTimeout);
+            scriptSoundTrackerRef.current = null;
+            resolve();
+          };
+          const startTimeout = window.setTimeout(finish, 3000);
+          const playbackTimeout = window.setTimeout(finish, 120000);
+          scriptSoundTrackerRef.current = { started: false, resolve: finish, startTimeout, playbackTimeout };
+        })
+      : Promise.resolve();
     const preparedAudioPromise = soundUrl
       ? prepareAlertAudio(soundUrl).then(audio => audio).catch(audioError => {
           console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
@@ -391,6 +434,10 @@ export default function SociabuzzPage() {
         const playedToEnd = await playPreparedAudio(preparedAudio);
         if (!playedToEnd) soundFailed = true;
       });
+    } else if (scriptSoundSelected) {
+      setAudioStatus('checking');
+      setAudioStatusMessage('Menunggu suara custom dari JavaScript...');
+      soundPlayback = scriptSoundPlayback;
     } else if (!currentConfig.useCustomSound && !scriptHandlesSound) {
       setAudioStatus('playing');
       setAudioStatusMessage('Suara donasi sedang diputar');
@@ -414,7 +461,27 @@ export default function SociabuzzPage() {
       const minimumVisibleTime = new Promise<void>(resolve => {
         alertTimerRef.current = window.setTimeout(resolve, currentConfig.durationMs);
       });
-      await Promise.all([soundPlayback, minimumVisibleTime]);
+      const template = currentConfig.mode === 'custom' ? currentConfig.html : DEFAULT_HTML;
+      const actionHtml = /<[^>]*class=["'][^"']*\baction\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i.exec(template)?.[1] ?? '';
+      const actionText = actionHtml && !/\{\{[^}]+\}\}/.test(actionHtml)
+        ? actionHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').trim()
+        : nextAlert.fromText || 'mengirim';
+      const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
+      const speechPlayback = soundPlayback.then(async () => {
+        if (!speechText) return;
+        setAudioStatus('speaking');
+        setAudioStatusMessage('Membacakan notifikasi donasi...');
+        try {
+          const voice = await speakSociaBuzzAlert(speechText);
+          setAudioStatusMessage(`TTS selesai (${voice})`);
+        } catch (speechError) {
+          soundFailed = true;
+          console.error('[SociaBuzz] Donation TTS failed:', speechError);
+          setAudioStatus('error');
+          setAudioStatusMessage('TTS gagal — periksa izin suara browser');
+        }
+      });
+      await Promise.all([speechPlayback, minimumVisibleTime]);
     } catch (queueError) {
       soundFailed = true;
       console.error('[SociaBuzz] Alert playback failed:', queueError);
@@ -442,6 +509,24 @@ export default function SociabuzzPage() {
   useEffect(() => {
     processAlertQueueRef.current = () => { void processAlertQueue(); };
   }, [processAlertQueue]);
+
+  useEffect(() => {
+    const handleScriptSoundMessage = (event: MessageEvent) => {
+      if (event.source !== alertFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
+      const tracker = scriptSoundTrackerRef.current;
+      if (!tracker) return;
+      if (event.data.type === 'sociabuzz:sound-start') {
+        tracker.started = true;
+        window.clearTimeout(tracker.startTimeout);
+        setAudioStatus('playing');
+        setAudioStatusMessage('Suara donasi sedang diputar');
+      } else if (event.data.type === 'sociabuzz:sound-end') {
+        tracker.resolve();
+      }
+    };
+    window.addEventListener('message', handleScriptSoundMessage);
+    return () => window.removeEventListener('message', handleScriptSoundMessage);
+  }, []);
 
   useEffect(() => {
     void fetch('/api/sociabuzz/config')
@@ -488,7 +573,13 @@ export default function SociabuzzPage() {
 
   useEffect(() => () => {
     if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
+    if (scriptSoundTrackerRef.current) {
+      window.clearTimeout(scriptSoundTrackerRef.current.startTimeout);
+      window.clearTimeout(scriptSoundTrackerRef.current.playbackTimeout);
+      scriptSoundTrackerRef.current = null;
+    }
     audioRef.current?.pause();
+    cancelSociaBuzzSpeech();
     void audioContextRef.current?.close().catch((audioError: unknown) => {
       console.error('[SociaBuzz] Audio context could not be closed:', audioError);
     });
@@ -636,6 +727,7 @@ export default function SociabuzzPage() {
       <style jsx global>{`html, body { background: transparent !important; overflow: hidden; }`}</style>
       {alert && (
         <iframe
+          ref={alertFrameRef}
           title="SociaBuzz alert"
           sandbox="allow-scripts"
           allow="autoplay"
@@ -678,7 +770,7 @@ export default function SociabuzzPage() {
                 : 'border-emerald-300/30 bg-slate-950/85 text-emerald-100'
           }`}
         >
-          {audioStatus === 'checking' || audioStatus === 'playing'
+          {audioStatus === 'checking' || audioStatus === 'playing' || audioStatus === 'speaking'
             ? <LoaderCircle size={16} className="shrink-0 animate-spin" />
             : audioStatus === 'ready'
               ? <Volume2 size={16} className="shrink-0" />
@@ -686,7 +778,7 @@ export default function SociabuzzPage() {
           <span className="min-w-0 flex-1 truncate">{audioStatusMessage}</span>
           {audioProgress !== null && <span className="shrink-0 tabular-nums">{audioProgress}%</span>}
         </button>
-        {(audioStatus === 'checking' || audioStatus === 'playing') && (
+        {(audioStatus === 'checking' || audioStatus === 'playing' || audioStatus === 'speaking') && (
           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-950/80">
             <div
               className={`h-full rounded-full bg-emerald-400 transition-[width] duration-150 ${audioProgress === null ? 'w-1/3 animate-pulse' : ''}`}
@@ -711,6 +803,9 @@ export default function SociabuzzPage() {
             <div className="space-y-5">
               <div>
                 <label className="mb-2 block text-sm font-semibold">Mode alert</label>
+                <p className="mb-3 text-xs leading-5 text-slate-400">
+                  TTS otomatis membaca nominal, aksi, nama, dan pesan setelah suara donasi selesai. ResponsiveVoice dipakai jika API key dikonfigurasi; jika tidak, browser menggunakan suara TTS bawaannya. Teks donasi dikirim ke penyedia TTS saat ResponsiveVoice aktif.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   {(['default', 'custom'] as const).map((mode) => (
                     <button
