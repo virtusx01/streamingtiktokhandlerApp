@@ -1,5 +1,24 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## SociaBuzz donation alert TTS
+
+The SociaBuzz alert speaks after the donation sound has completed. If a custom
+sound cannot load or finish, the alert plays its built-in tone before starting
+TTS. The `/api/sociabuzz/tts` endpoint is available without an application
+login so public OBS/browser sources can use it; requests are size-limited and
+rate-limited.
+
+ResponsiveVoice synthesis and its complete voice catalog use the official
+`@responsivevoice/api-client` on the server. Set `RESPONSIVEVOICE_API_KEY` and
+`RESPONSIVEVOICE_API_SECRET` in the server environment (for example, Render).
+The API secret must never use a `NEXT_PUBLIC_` variable or be sent to the
+browser. This server-to-server API path does not require site URL verification
+or a user login at playback time. If either credential is missing or
+ResponsiveVoice is unavailable, the alert falls back to the selected built-in
+browser voice. Voice, speed, and pitch can be selected in SociaBuzz settings.
+See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
+and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
+
 ## Render TikTok Listener with Local USB ADB
 
 The TikTok listener and event processing can run on Render while a small agent on

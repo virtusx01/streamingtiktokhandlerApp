@@ -1,24 +1,3 @@
-type ResponsiveVoiceOptions = {
-  rate: number;
-  onend: () => void;
-  onerror: (error?: unknown) => void;
-};
-
-type ResponsiveVoiceApi = {
-  cancel?: () => void;
-  init: (options: { apiKey: string }) => void;
-  speak: (text: string, voice: string, options: ResponsiveVoiceOptions) => void;
-};
-
-declare global {
-  interface Window {
-    responsiveVoice?: ResponsiveVoiceApi;
-  }
-}
-
-const RESPONSIVEVOICE_SCRIPT_ID = 'sociabuzz-responsivevoice-sdk';
-let responsiveVoicePromise: Promise<ResponsiveVoiceApi> | null = null;
-
 const SMALL_NUMBERS = [
   'nol', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan', 'sepuluh', 'sebelas',
 ];
@@ -108,125 +87,165 @@ export function buildSociaBuzzSpeechText(amount: string, action: string, support
   ].filter(Boolean).join('. ');
 }
 
-function loadResponsiveVoice(): Promise<ResponsiveVoiceApi> {
-  if (typeof window === 'undefined') return Promise.reject(new Error('TTS hanya tersedia di browser.'));
-  const apiKey = process.env.NEXT_PUBLIC_RESPONSIVEVOICE_API_KEY?.trim();
-  if (!apiKey) return Promise.reject(new Error('ResponsiveVoice API key belum dikonfigurasi.'));
-  if (window.responsiveVoice) {
-    window.responsiveVoice.init({ apiKey });
-    return Promise.resolve(window.responsiveVoice);
+let activeTtsAudio: HTMLAudioElement | null = null;
+let activeTtsObjectUrl: string | null = null;
+let cancelActiveTtsAudio: (() => void) | null = null;
+let activeTtsController: AbortController | null = null;
+let cancelActiveBrowserTts: (() => void) | null = null;
+let speechGeneration = 0;
+
+function decodeVoiceId(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
   }
-  if (responsiveVoicePromise) return responsiveVoicePromise;
-
-  responsiveVoicePromise = new Promise<ResponsiveVoiceApi>((resolve, reject) => {
-    let script = document.getElementById(RESPONSIVEVOICE_SCRIPT_ID) as HTMLScriptElement | null;
-    const timeout = window.setTimeout(() => reject(new Error('ResponsiveVoice SDK load timeout.')), 15000);
-    const onLoad = () => {
-      window.clearTimeout(timeout);
-      if (!window.responsiveVoice) {
-        reject(new Error('ResponsiveVoice SDK dimuat tetapi API tidak tersedia.'));
-        return;
-      }
-      try {
-        window.responsiveVoice.init({ apiKey });
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      resolve(window.responsiveVoice);
-    };
-    const onError = () => {
-      window.clearTimeout(timeout);
-      reject(new Error('Gagal memuat ResponsiveVoice SDK.'));
-    };
-
-    if (script) {
-      script.addEventListener('load', onLoad, { once: true });
-      script.addEventListener('error', onError, { once: true });
-      return;
-    }
-
-    script = document.createElement('script');
-    script.id = RESPONSIVEVOICE_SCRIPT_ID;
-    script.src = 'https://cdn.responsivevoice.org/sdk/latest/responsivevoice.js';
-    script.async = true;
-    script.addEventListener('load', onLoad, { once: true });
-    script.addEventListener('error', onError, { once: true });
-    document.head.appendChild(script);
-  }).catch(error => {
-    responsiveVoicePromise = null;
-    throw error;
-  });
-
-  return responsiveVoicePromise;
 }
 
-function speakWithResponsiveVoice(text: string): Promise<void> {
-  return loadResponsiveVoice().then(voice => new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error('ResponsiveVoice TTS timeout.')), 120000);
-    const finish = (error?: unknown) => {
-      window.clearTimeout(timeout);
-      if (error) reject(error);
-      else resolve();
-    };
-
-    try {
-      voice.speak(text, 'Indonesian Female', {
-        rate: 1,
-        onend: () => finish(),
-        onerror: error => finish(error || new Error('ResponsiveVoice gagal membacakan teks.')),
-      });
-    } catch (error) {
-      finish(error);
-    }
-  }));
-}
-
-function speakWithBrowserVoice(text: string): Promise<void> {
+function speakWithBrowserVoice(text: string, voiceId: string, rate: number, pitch: number): Promise<void> {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    return Promise.reject(new Error('TTS ResponsiveVoice dan browser tidak tersedia.'));
+    return Promise.reject(new Error('TTS browser tidak tersedia.'));
   }
 
   return new Promise<void>((resolve, reject) => {
     const utterance = new SpeechSynthesisUtterance(text);
+    const selectedVoiceURI = voiceId.startsWith('browser:')
+      ? decodeVoiceId(voiceId.slice('browser:'.length))
+      : '';
+    const voices = window.speechSynthesis.getVoices();
+    const selectedVoice = voices.find(voice => voice.voiceURI === selectedVoiceURI);
+    utterance.voice = selectedVoice ?? null;
     const timeout = window.setTimeout(() => {
       window.speechSynthesis.cancel();
       reject(new Error('Browser TTS timeout.'));
     }, 120000);
-    utterance.lang = 'id-ID';
-    utterance.rate = 1;
-    utterance.onend = () => {
+    utterance.lang = selectedVoice?.lang || 'id-ID';
+    utterance.rate = rate;
+    utterance.pitch = pitch;
+    utterance.onerror = event => {
+      window.clearTimeout(timeout);
+      if (cancelActiveBrowserTts === cancel) cancelActiveBrowserTts = null;
+      reject(new Error(`Browser TTS gagal: ${event.error}`));
+    };
+    const cancel = () => {
       window.clearTimeout(timeout);
       resolve();
     };
-    utterance.onerror = event => {
+    cancelActiveBrowserTts = cancel;
+    utterance.onend = () => {
       window.clearTimeout(timeout);
-      reject(new Error(`Browser TTS gagal: ${event.error}`));
+      if (cancelActiveBrowserTts === cancel) cancelActiveBrowserTts = null;
+      resolve();
     };
     try {
       window.speechSynthesis.speak(utterance);
     } catch (error) {
       window.clearTimeout(timeout);
+      if (cancelActiveBrowserTts === cancel) cancelActiveBrowserTts = null;
       reject(error);
     }
   });
 }
 
-export async function speakSociaBuzzAlert(text: string): Promise<'ResponsiveVoice' | 'browser'> {
-  if (process.env.NEXT_PUBLIC_RESPONSIVEVOICE_API_KEY?.trim()) {
+function speakWithResponsiveVoice(text: string, voice: string, rate: number, pitch: number): Promise<void> {
+  const controller = new AbortController();
+  activeTtsController = controller;
+  return fetch('/api/sociabuzz/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice, rate, pitch }),
+    cache: 'no-store',
+    signal: controller.signal,
+  }).then(async response => {
+    if (!response.ok) {
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(result?.error || `ResponsiveVoice request failed (${response.status}).`);
+    }
+
+    const audioBlob = await response.blob();
+    if (!audioBlob.size) throw new Error('ResponsiveVoice returned an empty audio file.');
+    const objectUrl = URL.createObjectURL(audioBlob);
+    activeTtsObjectUrl = objectUrl;
+    const audio = new Audio(objectUrl);
+    activeTtsAudio = audio;
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeout = window.setTimeout(() => {
+        audio.pause();
+        finish(new Error('ResponsiveVoice playback timeout.'));
+      }, 120000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+        if (activeTtsAudio === audio) activeTtsAudio = null;
+        if (activeTtsObjectUrl === objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          activeTtsObjectUrl = null;
+        }
+        if (cancelActiveTtsAudio === cancel) cancelActiveTtsAudio = null;
+      };
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+      const onEnded = () => finish();
+      const onError = () => finish(new Error('ResponsiveVoice audio playback failed.'));
+      const cancel = () => finish();
+
+      cancelActiveTtsAudio = cancel;
+      audio.addEventListener('ended', onEnded);
+      audio.addEventListener('error', onError);
+      void audio.play().catch((error: unknown) => {
+        finish(error instanceof Error ? error : new Error('ResponsiveVoice audio playback was blocked.'));
+      });
+    });
+  }).finally(() => {
+    if (activeTtsController === controller) activeTtsController = null;
+  });
+}
+
+export async function speakSociaBuzzAlert(
+  text: string,
+  voiceId: string,
+  rate: number,
+  pitch: number,
+): Promise<'ResponsiveVoice' | 'browser'> {
+  const generation = speechGeneration;
+  if (voiceId.startsWith('responsive:')) {
+    const voiceName = decodeVoiceId(voiceId.slice('responsive:'.length));
     try {
-      await speakWithResponsiveVoice(text);
+      if (!voiceName) throw new Error('ResponsiveVoice voice selection is invalid.');
+      await speakWithResponsiveVoice(text, voiceName, rate, pitch);
       return 'ResponsiveVoice';
     } catch (error) {
+      if (generation !== speechGeneration) return 'browser';
       console.warn('[SociaBuzz] ResponsiveVoice unavailable; using browser TTS:', error);
     }
   }
-  await speakWithBrowserVoice(text);
+
+  if (generation !== speechGeneration) return 'browser';
+  await speakWithBrowserVoice(text, voiceId, rate, pitch);
   return 'browser';
 }
 
 export function cancelSociaBuzzSpeech(): void {
   if (typeof window === 'undefined') return;
-  window.responsiveVoice?.cancel?.();
+  speechGeneration += 1;
+  activeTtsController?.abort();
+  activeTtsController = null;
+  cancelActiveBrowserTts?.();
+  cancelActiveBrowserTts = null;
+  activeTtsAudio?.pause();
+  cancelActiveTtsAudio?.();
+  activeTtsAudio = null;
+  if (activeTtsObjectUrl) {
+    URL.revokeObjectURL(activeTtsObjectUrl);
+    activeTtsObjectUrl = null;
+  }
   window.speechSynthesis?.cancel();
 }

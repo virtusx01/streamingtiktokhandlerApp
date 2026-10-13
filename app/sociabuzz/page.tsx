@@ -12,7 +12,20 @@ type AlertConfig = {
   durationMs: number;
   useCustomSound: boolean;
   customSoundUrl: string;
+  ttsVoice: string;
+  ttsRate: number;
+  ttsPitch: number;
   webhookTokenConfigured: boolean;
+};
+
+type ResponsiveVoiceOption = {
+  name: string;
+  flag: string;
+  lang: string;
+  gender: string;
+  provider: string | null;
+  isByok: boolean;
+  deprecated: boolean;
 };
 
 type AlertData = {
@@ -114,22 +127,43 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
       const originalPlay = HTMLMediaElement.prototype.play;
+      const trackedAudios = new Set();
+      let soundStopped = false;
+      let soundSequence = 0;
       HTMLMediaElement.prototype.play = function(...args) {
         if (!(this instanceof HTMLAudioElement)) return originalPlay.apply(this, args);
-        window.parent.postMessage({ type: 'sociabuzz:sound-start' }, '*');
-        const finish = () => window.parent.postMessage({ type: 'sociabuzz:sound-end' }, '*');
+        if (soundStopped) return Promise.reject(new DOMException('Donation sound fallback started.', 'AbortError'));
+        trackedAudios.add(this);
+        const soundId = Date.now().toString() + '-' + (++soundSequence);
+        window.parent.postMessage({ type: 'sociabuzz:sound-start', soundId }, '*');
+        let settled = false;
+        const finish = (played) => {
+          if (settled) return;
+          settled = true;
+          trackedAudios.delete(this);
+          window.parent.postMessage({ type: 'sociabuzz:sound-end', soundId, played }, '*');
+        };
         let playback;
         try {
           playback = originalPlay.apply(this, args);
         } catch (error) {
-          finish();
+          finish(false);
           throw error;
         }
-        this.addEventListener('ended', finish, { once: true });
-        this.addEventListener('error', finish, { once: true });
-        playback.catch(finish);
+        this.addEventListener('ended', () => finish(true), { once: true });
+        this.addEventListener('error', () => finish(false), { once: true });
+        this.addEventListener('pause', () => finish(false), { once: true });
+        playback.then(
+          () => window.parent.postMessage({ type: 'sociabuzz:sound-ready', soundId }, '*'),
+          () => finish(false)
+        );
         return playback;
       };
+      window.addEventListener('message', event => {
+        if (event.source !== window.parent || event.data?.type !== 'sociabuzz:sound-stop') return;
+        soundStopped = true;
+        trackedAudios.forEach(audio => audio.pause());
+      });
     })();</script>
     <script>${safeJavascript}</script></body></html>`;
 }
@@ -143,6 +177,9 @@ export default function SociabuzzPage() {
     durationMs: 8000,
     useCustomSound: false,
     customSoundUrl: '',
+    ttsVoice: 'browser:default',
+    ttsRate: 1,
+    ttsPitch: 1,
     webhookTokenConfigured: false,
   });
   const [alert, setAlert] = useState<AlertData | null>(null);
@@ -161,6 +198,12 @@ export default function SociabuzzPage() {
   const [audioStatus, setAudioStatus] = useState<AudioStatus>('locked');
   const [audioProgress, setAudioProgress] = useState<number | null>(null);
   const [audioStatusMessage, setAudioStatusMessage] = useState('Mencoba mengaktifkan suara otomatis...');
+  const [responsiveVoices, setResponsiveVoices] = useState<ResponsiveVoiceOption[]>([]);
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [responsiveVoiceConfigured, setResponsiveVoiceConfigured] = useState(false);
+  const [loadingTtsVoices, setLoadingTtsVoices] = useState(false);
+  const [ttsVoiceError, setTtsVoiceError] = useState('');
+  const [ttsVoiceSearch, setTtsVoiceSearch] = useState('');
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const alertFrameRef = useRef<HTMLIFrameElement>(null);
@@ -173,7 +216,10 @@ export default function SociabuzzPage() {
   const alertTimerRef = useRef<number | null>(null);
   const scriptSoundTrackerRef = useRef<{
     started: boolean;
-    resolve: () => void;
+    completedSuccessfully: boolean;
+    pendingSoundIds: Set<string>;
+    completionTimeout: number | null;
+    resolve: (played: boolean) => void;
     startTimeout: number;
     playbackTimeout: number;
   } | null>(null);
@@ -266,6 +312,22 @@ export default function SociabuzzPage() {
     });
     await new Promise(resolve => window.setTimeout(resolve, 650));
   }, [getAudioContext]);
+
+  const playFallbackDonationSound = useCallback(async () => {
+    setAudioStatus('checking');
+    setAudioStatusMessage('Suara donasi tidak siap — memutar suara fallback...');
+    try {
+      await playDefaultAlertSound();
+      setAudioStatus('playing');
+      setAudioStatusMessage('Suara fallback selesai');
+      return true;
+    } catch (audioError) {
+      console.error('[SociaBuzz] Fallback donation sound failed:', audioError);
+      setAudioStatus('error');
+      setAudioStatusMessage('Suara donasi dan suara fallback gagal diputar');
+      return false;
+    }
+  }, [playDefaultAlertSound]);
 
   const prepareAlertAudio = useCallback((url: string) => new Promise<HTMLAudioElement>((resolve, reject) => {
     const audio = new Audio();
@@ -388,20 +450,30 @@ export default function SociabuzzPage() {
         ? currentConfig.customSoundUrl
         : nextAlert.soundUrl || mediaAudioUrl;
     const scriptSoundPlayback = scriptSoundSelected
-      ? new Promise<void>(resolve => {
-          const finish = () => {
+      ? new Promise<boolean>(resolve => {
+          const finish = (played: boolean) => {
             const tracker = scriptSoundTrackerRef.current;
             if (!tracker) return;
             window.clearTimeout(tracker.startTimeout);
             window.clearTimeout(tracker.playbackTimeout);
+            if (tracker.completionTimeout !== null) window.clearTimeout(tracker.completionTimeout);
             scriptSoundTrackerRef.current = null;
-            resolve();
+            alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-stop' }, '*');
+            resolve(played);
           };
-          const startTimeout = window.setTimeout(finish, 3000);
-          const playbackTimeout = window.setTimeout(finish, 120000);
-          scriptSoundTrackerRef.current = { started: false, resolve: finish, startTimeout, playbackTimeout };
+          const startTimeout = window.setTimeout(() => finish(false), 15000);
+          const playbackTimeout = window.setTimeout(() => finish(false), 60000);
+          scriptSoundTrackerRef.current = {
+            started: false,
+            completedSuccessfully: false,
+            pendingSoundIds: new Set(),
+            completionTimeout: null,
+            resolve: finish,
+            startTimeout,
+            playbackTimeout,
+          };
         })
-      : Promise.resolve();
+      : Promise.resolve(true);
     const preparedAudioPromise = soundUrl
       ? prepareAlertAudio(soundUrl).then(audio => audio).catch(audioError => {
           console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
@@ -412,12 +484,6 @@ export default function SociabuzzPage() {
       : Promise.resolve(null);
     let soundFailed = false;
 
-    if (!soundUrl && currentConfig.useCustomSound && !scriptHandlesSound) {
-      soundFailed = true;
-      setAudioStatus('error');
-      setAudioStatusMessage('Suara custom aktif tetapi file belum dipilih');
-    }
-
     setAlert(nextAlert);
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -426,18 +492,20 @@ export default function SociabuzzPage() {
     if (soundUrl) {
       soundPlayback = preparedAudioPromise.then(async preparedAudio => {
         if (!preparedAudio) {
-          soundFailed = true;
+          soundFailed = !(await playFallbackDonationSound());
           return;
         }
         setAudioStatus('ready');
         setAudioStatusMessage('Suara siap — notifikasi sedang tampil');
         const playedToEnd = await playPreparedAudio(preparedAudio);
-        if (!playedToEnd) soundFailed = true;
+        if (!playedToEnd) soundFailed = !(await playFallbackDonationSound());
       });
     } else if (scriptSoundSelected) {
       setAudioStatus('checking');
-      setAudioStatusMessage('Menunggu suara custom dari JavaScript...');
-      soundPlayback = scriptSoundPlayback;
+      setAudioStatusMessage('Memuat suara custom dari JavaScript...');
+      soundPlayback = scriptSoundPlayback.then(async played => {
+        if (!played) soundFailed = !(await playFallbackDonationSound());
+      });
     } else if (!currentConfig.useCustomSound && !scriptHandlesSound) {
       setAudioStatus('playing');
       setAudioStatusMessage('Suara donasi sedang diputar');
@@ -454,7 +522,11 @@ export default function SociabuzzPage() {
         })
         .finally(() => setAudioProgress(null));
     } else {
-      soundPlayback = Promise.resolve();
+      soundPlayback = currentConfig.useCustomSound
+        ? playFallbackDonationSound().then(fallbackPlayed => {
+            soundFailed = !fallbackPlayed;
+          })
+        : Promise.resolve();
     }
 
     try {
@@ -472,7 +544,12 @@ export default function SociabuzzPage() {
         setAudioStatus('speaking');
         setAudioStatusMessage('Membacakan notifikasi donasi...');
         try {
-          const voice = await speakSociaBuzzAlert(speechText);
+          const voice = await speakSociaBuzzAlert(
+            speechText,
+            currentConfig.ttsVoice || 'browser:default',
+            currentConfig.ttsRate ?? 1,
+            currentConfig.ttsPitch ?? 1,
+          );
           setAudioStatusMessage(`TTS selesai (${voice})`);
         } catch (speechError) {
           soundFailed = true;
@@ -504,7 +581,7 @@ export default function SociabuzzPage() {
       processingAlertRef.current = false;
       if (alertQueueRef.current.length > 0) void processAlertQueue();
     }
-  }, [playDefaultAlertSound, playPreparedAudio, prepareAlertAudio]);
+  }, [playDefaultAlertSound, playFallbackDonationSound, playPreparedAudio, prepareAlertAudio]);
 
   useEffect(() => {
     processAlertQueueRef.current = () => { void processAlertQueue(); };
@@ -514,14 +591,30 @@ export default function SociabuzzPage() {
     const handleScriptSoundMessage = (event: MessageEvent) => {
       if (event.source !== alertFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
       const tracker = scriptSoundTrackerRef.current;
-      if (!tracker) return;
+      const soundId = typeof event.data.soundId === 'string' ? event.data.soundId : '';
+      if (!tracker || !soundId) return;
       if (event.data.type === 'sociabuzz:sound-start') {
         tracker.started = true;
         window.clearTimeout(tracker.startTimeout);
+        if (tracker.completionTimeout !== null) {
+          window.clearTimeout(tracker.completionTimeout);
+          tracker.completionTimeout = null;
+        }
+        tracker.pendingSoundIds.add(soundId);
+        setAudioStatus('checking');
+        setAudioStatusMessage('Menunggu file suara custom dimuat...');
+      } else if (event.data.type === 'sociabuzz:sound-ready') {
         setAudioStatus('playing');
-        setAudioStatusMessage('Suara donasi sedang diputar');
+        setAudioStatusMessage('Suara donasi custom sedang diputar');
       } else if (event.data.type === 'sociabuzz:sound-end') {
-        tracker.resolve();
+        tracker.pendingSoundIds.delete(soundId);
+        tracker.completedSuccessfully ||= event.data.played === true;
+        if (!tracker.pendingSoundIds.size) {
+          tracker.completionTimeout = window.setTimeout(
+            () => tracker.resolve(tracker.completedSuccessfully),
+            500,
+          );
+        }
       }
     };
     window.addEventListener('message', handleScriptSoundMessage);
@@ -571,11 +664,51 @@ export default function SociabuzzPage() {
     return () => source.close();
   }, []);
 
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let active = true;
+    setLoadingTtsVoices(true);
+    setTtsVoiceError('');
+
+    const updateBrowserVoices = () => {
+      if (active && 'speechSynthesis' in window) {
+        setBrowserVoices(window.speechSynthesis.getVoices());
+      }
+    };
+    updateBrowserVoices();
+    window.speechSynthesis?.addEventListener('voiceschanged', updateBrowserVoices);
+
+    void fetch('/api/sociabuzz/tts/voices', { cache: 'no-store' })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Gagal memuat suara ResponsiveVoice.');
+        if (!active) return;
+        setResponsiveVoiceConfigured(result.configured === true);
+        setResponsiveVoices(Array.isArray(result.voices) ? result.voices : []);
+        if (result.error) setTtsVoiceError(result.error);
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setTtsVoiceError(loadError instanceof Error ? loadError.message : 'Gagal memuat pilihan suara.');
+      })
+      .finally(() => {
+        if (active) setLoadingTtsVoices(false);
+      });
+
+    return () => {
+      active = false;
+      window.speechSynthesis?.removeEventListener('voiceschanged', updateBrowserVoices);
+    };
+  }, [settingsOpen]);
+
   useEffect(() => () => {
     if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
     if (scriptSoundTrackerRef.current) {
       window.clearTimeout(scriptSoundTrackerRef.current.startTimeout);
       window.clearTimeout(scriptSoundTrackerRef.current.playbackTimeout);
+      if (scriptSoundTrackerRef.current.completionTimeout !== null) {
+        window.clearTimeout(scriptSoundTrackerRef.current.completionTimeout);
+      }
       scriptSoundTrackerRef.current = null;
     }
     audioRef.current?.pause();
@@ -721,6 +854,14 @@ export default function SociabuzzPage() {
       setTestingAlert(false);
     }
   };
+
+  const normalizedVoiceSearch = ttsVoiceSearch.trim().toLocaleLowerCase();
+  const visibleResponsiveVoices = responsiveVoices.filter(voice =>
+    `${voice.name} ${voice.lang} ${voice.gender} ${voice.provider ?? ''}`.toLocaleLowerCase().includes(normalizedVoiceSearch),
+  );
+  const visibleBrowserVoices = browserVoices.filter(voice =>
+    `${voice.name} ${voice.lang} ${voice.voiceURI}`.toLocaleLowerCase().includes(normalizedVoiceSearch),
+  );
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-transparent">
@@ -949,6 +1090,103 @@ export default function SociabuzzPage() {
                   <p role="alert" className="mt-2 text-xs text-amber-300">Pilih file suara terlebih dahulu sebelum menyimpan.</p>
                 )}
                 <p className="mt-2 text-[11px] text-slate-500">Format audio umum, maksimal 15 MB. Suara custom hanya diputar ketika toggle aktif.</p>
+              </section>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                <div>
+                  <h2 className="text-sm font-semibold">Suara TTS donasi</h2>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    TTS dimulai setelah suara donasi selesai. API TTS aplikasi dapat dipakai tanpa login pengguna. ResponsiveVoice memakai API key dan secret server-to-server di environment server, bukan verifikasi URL/site code browser; secret tidak dikirim ke browser.
+                  </p>
+                </div>
+                <label htmlFor="sociabuzz-tts-search" className="mb-2 mt-4 block text-xs font-semibold">Cari suara berdasarkan nama, bahasa, atau penyedia</label>
+                <input
+                  id="sociabuzz-tts-search"
+                  type="search"
+                  value={ttsVoiceSearch}
+                  onChange={event => setTtsVoiceSearch(event.target.value)}
+                  placeholder="Contoh: Indonesian, female, en-US"
+                  className="mb-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
+                />
+                <label htmlFor="sociabuzz-tts-voice" className="sr-only">Pilih suara TTS</label>
+                <select
+                  id="sociabuzz-tts-voice"
+                  value={config.ttsVoice}
+                  onChange={event => setConfig(current => ({ ...current, ttsVoice: event.target.value }))}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-violet-400"
+                >
+                  <option value="browser:default">Suara bawaan browser (Indonesia)</option>
+                  {config.ttsVoice.startsWith('responsive:') &&
+                    !responsiveVoices.some(voice => `responsive:${encodeURIComponent(voice.name)}` === config.ttsVoice) && (
+                      <option value={config.ttsVoice}>Suara ResponsiveVoice tersimpan (tidak ada di katalog saat ini)</option>
+                    )}
+                  {config.ttsVoice.startsWith('browser:') &&
+                    config.ttsVoice !== 'browser:default' &&
+                    !browserVoices.some(voice => `browser:${encodeURIComponent(voice.voiceURI)}` === config.ttsVoice) && (
+                      <option value={config.ttsVoice}>Suara browser tersimpan (tidak tersedia di perangkat ini)</option>
+                    )}
+                  {visibleResponsiveVoices.length > 0 && (
+                    <optgroup label={`ResponsiveVoice (${visibleResponsiveVoices.length})`}>
+                      {visibleResponsiveVoices.map(voice => (
+                        <option
+                          key={`${voice.name}:${voice.lang}`}
+                          value={`responsive:${encodeURIComponent(voice.name)}`}
+                          disabled={voice.deprecated}
+                        >
+                          {voice.flag} {voice.name} · {voice.lang} · {voice.gender === 'f' ? 'female' : 'male'}
+                          {voice.provider ? ` · ${voice.provider}` : ''}
+                          {voice.isByok ? ' · BYOK' : ''}
+                          {voice.deprecated ? ' · deprecated' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {visibleBrowserVoices.length > 0 && (
+                    <optgroup label={`Suara tersedia di browser (${visibleBrowserVoices.length})`}>
+                      {visibleBrowserVoices.map(voice => (
+                        <option key={voice.voiceURI} value={`browser:${encodeURIComponent(voice.voiceURI)}`}>
+                          {voice.name} · {voice.lang}{voice.default ? ' · default' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-slate-300">
+                    Kecepatan: {config.ttsRate.toFixed(1)}×
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2"
+                      step="0.1"
+                      value={config.ttsRate}
+                      onChange={event => setConfig(current => ({ ...current, ttsRate: Number(event.target.value) }))}
+                      className="mt-2 w-full accent-violet-500"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-300">
+                    Pitch: {config.ttsPitch.toFixed(1)}×
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={config.ttsPitch}
+                      onChange={event => setConfig(current => ({ ...current, ttsPitch: Number(event.target.value) }))}
+                      className="mt-2 w-full accent-violet-500"
+                    />
+                  </label>
+                </div>
+                {loadingTtsVoices && <p className="mt-2 text-xs text-violet-200">Memuat katalog suara...</p>}
+                {!responsiveVoiceConfigured && (
+                  <p className="mt-2 text-xs leading-5 text-amber-200">
+                    Kredensial server ResponsiveVoice belum tersedia; TTS akan tetap berjalan menggunakan suara browser. Atur <code>RESPONSIVEVOICE_API_KEY</code> dan <code>RESPONSIVEVOICE_API_SECRET</code> di environment server untuk mengaktifkan katalog dan TTS ResponsiveVoice.
+                  </p>
+                )}
+                {ttsVoiceError && <p role="alert" className="mt-2 text-xs text-red-300">{ttsVoiceError}</p>}
+                {responsiveVoiceConfigured && responsiveVoices.length === 0 && !loadingTtsVoices && (
+                  <p className="mt-2 text-xs text-amber-200">Katalog ResponsiveVoice kosong atau belum berhasil dimuat. Pilihan suara browser tetap tersedia.</p>
+                )}
               </section>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">

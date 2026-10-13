@@ -13,6 +13,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1150.0",
     "@prisma/client": "^6.19.0",
+    "@responsivevoice/api-client": "^2.0.5",
     "@supabase/supabase-js": "^2.115.0",
     "@types/pg": "^8.23.1",
     "@types/uuid": "^10.0.0",

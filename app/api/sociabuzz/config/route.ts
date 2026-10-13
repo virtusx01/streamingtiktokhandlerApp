@@ -6,6 +6,9 @@ const CONFIG_KEY = 'sociabuzzAlertConfig';
 const TOKEN_KEY = 'sociabuzzWebhookToken';
 const TOKEN_HASH_KEY = 'sociabuzzWebhookTokenHash';
 const DEFAULT_HTML = '<div class="cyber-alert"><div class="custom-media" style="background-image:url(\'{{mediaUrl}}\');"></div><div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
+const DEFAULT_TTS_VOICE = process.env.RESPONSIVEVOICE_API_KEY?.trim() && process.env.RESPONSIVEVOICE_API_SECRET?.trim()
+  ? `responsive:${encodeURIComponent('Indonesian Female')}`
+  : 'browser:default';
 
 function isValidAlertHtml(html: unknown): html is string {
   return typeof html === 'string' &&
@@ -45,6 +48,15 @@ export async function GET() {
       : 8000,
     useCustomSound: safeConfig.useCustomSound === true,
     customSoundUrl,
+    ttsVoice: typeof safeConfig.ttsVoice === 'string' && safeConfig.ttsVoice.length <= 300
+      ? safeConfig.ttsVoice
+      : DEFAULT_TTS_VOICE,
+    ttsRate: typeof safeConfig.ttsRate === 'number' && Number.isFinite(safeConfig.ttsRate) && safeConfig.ttsRate >= 0.5 && safeConfig.ttsRate <= 2
+      ? safeConfig.ttsRate
+      : 1,
+    ttsPitch: typeof safeConfig.ttsPitch === 'number' && Number.isFinite(safeConfig.ttsPitch) && safeConfig.ttsPitch >= 0 && safeConfig.ttsPitch <= 2
+      ? safeConfig.ttsPitch
+      : 1,
     webhookTokenConfigured: Boolean(
       process.env.SOCIABUZZ_WEBHOOK_TOKEN ||
       getSetting(TOKEN_KEY, '') ||
@@ -72,6 +84,9 @@ export async function POST(req: Request) {
       durationMs,
       useCustomSound = false,
       customSoundUrl = '',
+      ttsVoice = DEFAULT_TTS_VOICE,
+      ttsRate = 1,
+      ttsPitch = 1,
       webhookToken,
     } = body;
     if (mode !== 'default' && mode !== 'custom') {
@@ -105,12 +120,25 @@ export async function POST(req: Request) {
     if (useCustomSound && !customSoundUrl) {
       return NextResponse.json({ error: 'Pilih file suara custom sebelum mengaktifkannya.' }, { status: 400 });
     }
+    if (
+      typeof ttsVoice !== 'string' ||
+      ttsVoice.length > 300 ||
+      (ttsVoice !== 'browser:default' && !/^(?:browser|responsive):.+$/.test(ttsVoice))
+    ) {
+      return NextResponse.json({ error: 'Pilihan suara TTS tidak valid.' }, { status: 400 });
+    }
+    if (typeof ttsRate !== 'number' || !Number.isFinite(ttsRate) || ttsRate < 0.5 || ttsRate > 2) {
+      return NextResponse.json({ error: 'Kecepatan TTS harus antara 0,5 dan 2.' }, { status: 400 });
+    }
+    if (typeof ttsPitch !== 'number' || !Number.isFinite(ttsPitch) || ttsPitch < 0 || ttsPitch > 2) {
+      return NextResponse.json({ error: 'Nada TTS harus antara 0 dan 2.' }, { status: 400 });
+    }
     if (webhookToken !== undefined && webhookToken !== '' &&
       (typeof webhookToken !== 'string' || webhookToken.length < 16 || webhookToken.length > 256)) {
       return NextResponse.json({ error: 'Webhook token harus berisi 16 sampai 256 karakter.' }, { status: 400 });
     }
 
-    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs, useCustomSound, customSoundUrl });
+    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs, useCustomSound, customSoundUrl, ttsVoice, ttsRate, ttsPitch });
     if (typeof webhookToken === 'string' && webhookToken.length > 0) {
       setSetting(TOKEN_KEY, webhookToken);
       setSetting(TOKEN_HASH_KEY, '');
