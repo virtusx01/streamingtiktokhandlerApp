@@ -29,6 +29,10 @@ function isValidAlertJavascript(javascript: unknown): javascript is string {
 export async function GET() {
   const config = getSetting(CONFIG_KEY, {});
   const safeConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+  const customSoundUrl = typeof safeConfig.customSoundUrl === 'string' &&
+    safeConfig.customSoundUrl.length <= 2048
+    ? safeConfig.customSoundUrl
+    : '';
   return NextResponse.json({
     mode: safeConfig.mode === 'custom' ? 'custom' : 'default',
     html: isValidAlertHtml(safeConfig.html) ? safeConfig.html : DEFAULT_HTML,
@@ -37,6 +41,8 @@ export async function GET() {
     durationMs: Number.isInteger(safeConfig.durationMs) && safeConfig.durationMs >= 1000 && safeConfig.durationMs <= 60000
       ? safeConfig.durationMs
       : 8000,
+    useCustomSound: safeConfig.useCustomSound === true,
+    customSoundUrl,
     webhookTokenConfigured: Boolean(
       process.env.SOCIABUZZ_WEBHOOK_TOKEN ||
       getSetting(TOKEN_KEY, '') ||
@@ -56,7 +62,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Konfigurasi tidak valid.' }, { status: 400 });
     }
 
-    const { mode, html, css = '', javascript = '', durationMs, webhookToken } = body;
+    const {
+      mode,
+      html,
+      css = '',
+      javascript = '',
+      durationMs,
+      useCustomSound = false,
+      customSoundUrl = '',
+      webhookToken,
+    } = body;
     if (mode !== 'default' && mode !== 'custom') {
       return NextResponse.json({ error: 'Mode alert tidak valid.' }, { status: 400 });
     }
@@ -72,12 +87,28 @@ export async function POST(req: Request) {
     if (!Number.isInteger(durationMs) || durationMs < 1000 || durationMs > 60000) {
       return NextResponse.json({ error: 'Durasi alert harus antara 1 sampai 60 detik.' }, { status: 400 });
     }
+    if (typeof useCustomSound !== 'boolean') {
+      return NextResponse.json({ error: 'Pengaturan suara custom tidak valid.' }, { status: 400 });
+    }
+    if (
+      typeof customSoundUrl !== 'string' ||
+      customSoundUrl.length > 2048 ||
+      (customSoundUrl !== '' && !(
+        /^\/uploads\/[A-Za-z0-9._-]+$/.test(customSoundUrl) ||
+        /^https:\/\/[^\s]+$/i.test(customSoundUrl)
+      ))
+    ) {
+      return NextResponse.json({ error: 'URL suara harus berupa file unggahan atau URL HTTPS yang valid.' }, { status: 400 });
+    }
+    if (useCustomSound && !customSoundUrl) {
+      return NextResponse.json({ error: 'Pilih file suara custom sebelum mengaktifkannya.' }, { status: 400 });
+    }
     if (webhookToken !== undefined && webhookToken !== '' &&
       (typeof webhookToken !== 'string' || webhookToken.length < 16 || webhookToken.length > 256)) {
       return NextResponse.json({ error: 'Webhook token harus berisi 16 sampai 256 karakter.' }, { status: 400 });
     }
 
-    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs });
+    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs, useCustomSound, customSoundUrl });
     if (typeof webhookToken === 'string' && webhookToken.length > 0) {
       setSetting(TOKEN_KEY, webhookToken);
       setSetting(TOKEN_HASH_KEY, '');

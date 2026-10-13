@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, X } from 'lucide-react';
+import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Upload, Volume2, X } from 'lucide-react';
 
 type AlertConfig = {
   mode: 'default' | 'custom';
@@ -9,6 +9,8 @@ type AlertConfig = {
   css: string;
   javascript: string;
   durationMs: number;
+  useCustomSound: boolean;
+  customSoundUrl: string;
   webhookTokenConfigured: boolean;
 };
 
@@ -102,6 +104,8 @@ export default function SociabuzzPage() {
     css: DEFAULT_CSS,
     javascript: '',
     durationMs: 8000,
+    useCustomSound: false,
+    customSoundUrl: '',
     webhookTokenConfigured: false,
   });
   const [alert, setAlert] = useState<AlertData | null>(null);
@@ -116,15 +120,22 @@ export default function SociabuzzPage() {
   const [copied, setCopied] = useState(false);
   const [testError, setTestError] = useState('');
   const [testingAlert, setTestingAlert] = useState(false);
+  const [uploadingCustomSound, setUploadingCustomSound] = useState(false);
   const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const customSoundInputRef = useRef<HTMLInputElement>(null);
+  const configRef = useRef(config);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
   const displayedCallbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=********`
     : CALLBACK_URL;
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) audioContextRef.current = new AudioContext();
@@ -168,21 +179,33 @@ export default function SociabuzzPage() {
     setAudioNeedsUnlock(false);
   }, [getAudioContext]);
 
-  const playAlertSound = useCallback(async (soundUrl?: string) => {
+  const playAlertSound = useCallback(async (soundUrl?: string, fallbackToDefault = true) => {
     if (soundUrl) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
       const audio = new Audio(soundUrl);
       audio.volume = 1;
       audio.preload = 'auto';
       audioRef.current = audio;
+      audio.onended = () => {
+        if (audioRef.current === audio) audioRef.current = null;
+      };
+      audio.onerror = () => {
+        if (audioRef.current === audio) audioRef.current = null;
+      };
       try {
         await audio.play();
         setAudioNeedsUnlock(false);
         return;
       } catch (audioError) {
-        console.warn('[SociaBuzz] Webhook audio could not be played; using the default alert sound:', audioError);
+        console.error('[SociaBuzz] Alert audio could not be played:', audioError);
+        if (!fallbackToDefault) return;
       }
     }
 
+    if (!fallbackToDefault) return;
     try {
       await playDefaultAlertSound();
     } catch (audioError) {
@@ -196,6 +219,7 @@ export default function SociabuzzPage() {
       .then(async (response) => {
         if (!response.ok) throw new Error('Gagal memuat konfigurasi alert.');
         const data = await response.json();
+        configRef.current = data;
         setConfig(data);
       })
       .catch((loadError: unknown) => {
@@ -224,13 +248,21 @@ export default function SociabuzzPage() {
           raw: data.raw,
         });
         setVisible(true);
+        const currentConfig = configRef.current;
         const mediaAudioUrl = typeof data.mediaUrl === 'string' &&
           /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(data.mediaUrl)
           ? data.mediaUrl
           : undefined;
-        void playAlertSound(
-          typeof data.soundUrl === 'string' ? data.soundUrl : mediaAudioUrl,
-        );
+        if (currentConfig.useCustomSound) {
+          if (currentConfig.customSoundUrl) {
+            void playAlertSound(currentConfig.customSoundUrl, false);
+          } else {
+            console.error('[SociaBuzz] Custom sound is enabled but no custom sound file is configured.');
+            setError('Suara custom aktif, tetapi file suara belum dipilih. Pilih file lalu simpan pengaturan.');
+          }
+        } else {
+          void playAlertSound(typeof data.soundUrl === 'string' ? data.soundUrl : mediaAudioUrl);
+        }
       } catch (parseError) {
         console.error('[SociaBuzz] Could not parse incoming event:', parseError);
       }
@@ -282,6 +314,10 @@ export default function SociabuzzPage() {
   };
 
   const saveSettings = useCallback(async () => {
+    if (config.useCustomSound && !config.customSoundUrl) {
+      setError('Pilih file suara custom sebelum mengaktifkan suara custom.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -301,6 +337,37 @@ export default function SociabuzzPage() {
       setSaving(false);
     }
   }, [config, webhookToken]);
+
+  const uploadCustomSound = async (file?: File) => {
+    if (!file) return;
+    if (!(file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(file.name))) {
+      setError('File harus berupa audio (MP3, WAV, OGG, M4A, AAC, atau WebM).');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setError('Ukuran file suara maksimal 15 MB.');
+      return;
+    }
+
+    setUploadingCustomSound(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch('/api/upload', { method: 'POST', body: formData });
+      const result = await response.json();
+      if (!response.ok || typeof result.url !== 'string') {
+        throw new Error(result.error || 'Gagal mengunggah file suara.');
+      }
+      setConfig(current => ({ ...current, customSoundUrl: result.url }));
+    } catch (uploadError) {
+      console.error('[SociaBuzz] Custom sound upload failed:', uploadError);
+      setError(uploadError instanceof Error ? uploadError.message : 'Gagal mengunggah file suara.');
+    } finally {
+      setUploadingCustomSound(false);
+      if (customSoundInputRef.current) customSoundInputRef.current.value = '';
+    }
+  };
 
   const loadWebhookLogs = useCallback(async () => {
     setLoadingWebhookLogs(true);
@@ -493,6 +560,63 @@ export default function SociabuzzPage() {
                   className="w-28 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-violet-400"
                 />
               </div>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-sm font-semibold"><Volume2 size={16} /> Suara donasi</h2>
+                    <p className="mt-1 text-xs leading-5 text-slate-400">Aktifkan untuk memakai file suara pilihanmu, bukan suara atau media audio dari payload SociaBuzz.</p>
+                  </div>
+                  <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs font-semibold text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={config.useCustomSound}
+                      onChange={(event) => setConfig(current => ({ ...current, useCustomSound: event.target.checked }))}
+                      className="h-4 w-4 accent-violet-500"
+                    />
+                    Gunakan suara custom
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    aria-label="URL file suara donasi custom"
+                    value={config.customSoundUrl}
+                    onChange={(event) => setConfig(current => ({ ...current, customSoundUrl: event.target.value }))}
+                    placeholder="URL file audio atau unggah file"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
+                  />
+                  <input
+                    ref={customSoundInputRef}
+                    type="file"
+                    accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+                    className="hidden"
+                    onChange={(event) => void uploadCustomSound(event.target.files?.[0])}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => customSoundInputRef.current?.click()}
+                    disabled={uploadingCustomSound}
+                    className="flex items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-60"
+                  >
+                    {uploadingCustomSound ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {uploadingCustomSound ? 'Mengunggah...' : 'Pilih file'}
+                  </button>
+                  {config.customSoundUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setConfig(current => ({ ...current, customSoundUrl: '' }))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
+                {config.useCustomSound && !config.customSoundUrl && (
+                  <p role="alert" className="mt-2 text-xs text-amber-300">Pilih file suara terlebih dahulu sebelum menyimpan.</p>
+                )}
+                <p className="mt-2 text-[11px] text-slate-500">Format audio umum, maksimal 15 MB. Suara custom hanya diputar ketika toggle aktif.</p>
+              </section>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
                 <label htmlFor="sociabuzz-token" className="mb-2 block text-sm font-semibold">Webhook token</label>
