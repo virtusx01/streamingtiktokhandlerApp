@@ -5,9 +5,14 @@ import path from 'path';
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const file = formData.get('file') as File;
-    if (!file) {
+    const uploadedFile = formData.get('file');
+    if (!(uploadedFile instanceof File)) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+    }
+    const file = uploadedFile;
+    const isAudioFile = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(file.name);
+    if (isAudioFile && file.size > 15 * 1024 * 1024) {
+      return NextResponse.json({ error: 'Audio uploads must be 15 MB or smaller.' }, { status: 413 });
     }
 
     const bytes = await file.arrayBuffer();
@@ -22,14 +27,15 @@ export async function POST(req: Request) {
       await fs.mkdir(uploadDir, { recursive: true });
     }
 
-    const filename = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+    const safeName = path.basename(file.name).replace(/[^A-Za-z0-9._-]/g, '_').slice(-160) || 'upload';
+    const filename = `${Date.now()}_${safeName}`;
     const filePath = path.join(uploadDir, filename);
     await fs.writeFile(filePath, buffer);
 
-    const fileUrl = `/uploads/${filename}`;
+    const fileUrl = `/api/uploads/${filename}`;
     return NextResponse.json({ url: fileUrl });
-  } catch (err: any) {
-    console.error("Upload error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (error: unknown) {
+    console.error("Upload error:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Upload failed.' }, { status: 500 });
   }
 }

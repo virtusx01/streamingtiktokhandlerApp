@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Upload, Volume2, X } from 'lucide-react';
+import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Upload, Volume2, VolumeX, X } from 'lucide-react';
 
 type AlertConfig = {
   mode: 'default' | 'custom';
@@ -39,6 +39,8 @@ type WebhookLog = {
   payloadFields: { path: string; value: string }[];
   mapped: AlertData;
 };
+
+type AudioStatus = 'locked' | 'ready' | 'checking' | 'playing' | 'error';
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
@@ -121,11 +123,18 @@ export default function SociabuzzPage() {
   const [testError, setTestError] = useState('');
   const [testingAlert, setTestingAlert] = useState(false);
   const [uploadingCustomSound, setUploadingCustomSound] = useState(false);
-  const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
+  const [audioStatus, setAudioStatus] = useState<AudioStatus>('locked');
+  const [audioProgress, setAudioProgress] = useState<number | null>(null);
+  const [audioStatusMessage, setAudioStatusMessage] = useState('Klik untuk mengaktifkan suara donasi');
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
   const configRef = useRef(config);
+  const audioUnlockedRef = useRef(false);
+  const alertQueueRef = useRef<AlertData[]>([]);
+  const processingAlertRef = useRef(false);
+  const processAlertQueueRef = useRef<() => void>(() => {});
+  const alertTimerRef = useRef<number | null>(null);
   const callbackUrl = webhookToken.trim()
     ? `${CALLBACK_URL}?token=${encodeURIComponent(webhookToken.trim())}`
     : CALLBACK_URL;
@@ -145,14 +154,31 @@ export default function SociabuzzPage() {
   const unlockAudio = useCallback(() => {
     try {
       void getAudioContext().resume()
-        .then(() => setAudioNeedsUnlock(false))
+        .then(() => {
+          const context = audioContextRef.current;
+          if (context) {
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            gain.gain.value = 0;
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.start();
+            oscillator.stop(context.currentTime + 0.05);
+          }
+          audioUnlockedRef.current = true;
+          setAudioStatus('ready');
+          setAudioStatusMessage('Audio siap');
+          processAlertQueueRef.current();
+        })
         .catch((audioError: unknown) => {
           console.error('[SociaBuzz] Audio could not be enabled:', audioError);
-          setAudioNeedsUnlock(true);
+          setAudioStatus('error');
+          setAudioStatusMessage('Audio gagal diaktifkan — klik untuk mencoba lagi');
         });
     } catch (audioError) {
       console.error('[SociaBuzz] Audio could not be initialized:', audioError);
-      setAudioNeedsUnlock(true);
+      setAudioStatus('error');
+      setAudioStatusMessage('Audio gagal diaktifkan — klik untuk mencoba lagi');
     }
   }, [getAudioContext]);
 
@@ -176,43 +202,206 @@ export default function SociabuzzPage() {
       oscillator.start(noteStart);
       oscillator.stop(noteStart + 0.4);
     });
-    setAudioNeedsUnlock(false);
+    await new Promise(resolve => window.setTimeout(resolve, 650));
   }, [getAudioContext]);
 
-  const playAlertSound = useCallback(async (soundUrl?: string, fallbackToDefault = true) => {
-    if (soundUrl) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
+  const prepareAlertAudio = useCallback((url: string) => new Promise<HTMLAudioElement>((resolve, reject) => {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.volume = 1;
+    audioRef.current = audio;
+    setAudioStatus('checking');
+    setAudioProgress(0);
+    setAudioStatusMessage('Memeriksa dan memuat suara donasi...');
+
+    let settled = false;
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      audio.removeEventListener('canplay', onReady);
+      audio.removeEventListener('canplaythrough', onReady);
+      audio.removeEventListener('progress', updateProgress);
+      audio.removeEventListener('error', onError);
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) {
+        if (audioRef.current === audio) audioRef.current = null;
+        audio.src = '';
+        reject(error);
+      } else {
+        resolve(audio);
       }
-      const audio = new Audio(soundUrl);
-      audio.volume = 1;
-      audio.preload = 'auto';
-      audioRef.current = audio;
-      audio.onended = () => {
-        if (audioRef.current === audio) audioRef.current = null;
-      };
-      audio.onerror = () => {
-        if (audioRef.current === audio) audioRef.current = null;
-      };
+    };
+    const onReady = () => {
+      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        updateProgress();
+        finish();
+      }
+    };
+    const updateProgress = () => {
+      const duration = audio.duration;
+      const bufferedEnd = audio.buffered.length ? audio.buffered.end(audio.buffered.length - 1) : 0;
+      if (Number.isFinite(duration) && duration > 0) {
+        setAudioProgress(Math.min(99, Math.round((bufferedEnd / duration) * 100)));
+      } else {
+        setAudioProgress(null);
+      }
+    };
+    const onError = () => finish(new Error(`Browser gagal memuat file suara (${audio.error?.message || 'format atau URL tidak didukung'}).`));
+    const timeout = window.setTimeout(() => finish(new Error('Pemeriksaan suara timeout setelah 20 detik. Periksa URL dan koneksi file audio.')), 20000);
+
+    audio.addEventListener('canplay', onReady);
+    audio.addEventListener('canplaythrough', onReady);
+    audio.addEventListener('progress', updateProgress);
+    audio.addEventListener('error', onError);
+    audio.src = url;
+    audio.load();
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) onReady();
+  }), []);
+
+  const playPreparedAudio = useCallback((audio: HTMLAudioElement) => new Promise<boolean>(resolve => {
+    let settled = false;
+    const finish = (playedToEnd: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      audio.removeEventListener('timeupdate', updateProgress);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
+      if (audioRef.current === audio) audioRef.current = null;
+      setAudioProgress(null);
+      resolve(playedToEnd);
+    };
+    const onError = () => {
+      console.error('[SociaBuzz] Donation sound failed during playback:', audio.error?.message || 'Unknown audio error');
+      setAudioStatus('error');
+      setAudioStatusMessage('Suara gagal diputar — periksa file audio');
+      finish(false);
+    };
+    const onEnded = () => finish(true);
+    const updateProgress = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setAudioProgress(Math.min(100, Math.round((audio.currentTime / audio.duration) * 100)));
+      }
+    };
+    const timeout = window.setTimeout(() => {
+      console.error('[SociaBuzz] Donation sound playback timed out; stopping audio.');
+      audio.pause();
+      setAudioStatus('error');
+      setAudioStatusMessage('Suara berhenti karena melewati batas playback');
+      finish(false);
+    }, 120000);
+    audio.addEventListener('timeupdate', updateProgress);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    setAudioStatus('playing');
+    setAudioStatusMessage('Suara donasi sedang diputar');
+    setAudioProgress(0);
+    void audio.play().then(() => {
+      audioUnlockedRef.current = true;
+    }).catch((audioError: unknown) => {
+      console.error('[SociaBuzz] Donation sound playback was rejected:', audioError);
+      setAudioStatus('error');
+      setAudioStatusMessage('Suara gagal diputar; klik ikon audio untuk mengaktifkan');
+      finish(false);
+    });
+  }), []);
+
+  const processAlertQueue = useCallback(async () => {
+    if (processingAlertRef.current || alertQueueRef.current.length === 0) return;
+    if (!audioUnlockedRef.current) {
+      setAudioStatus('locked');
+      setAudioStatusMessage('Klik untuk mengaktifkan suara donasi');
+      return;
+    }
+
+    processingAlertRef.current = true;
+    const nextAlert = alertQueueRef.current.shift()!;
+    const currentConfig = configRef.current;
+    const mediaAudioUrl = /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(nextAlert.mediaUrl)
+      ? nextAlert.mediaUrl
+      : undefined;
+    const soundUrl = currentConfig.useCustomSound
+      ? currentConfig.customSoundUrl
+      : nextAlert.soundUrl || mediaAudioUrl;
+    let preparedAudio: HTMLAudioElement | null = null;
+    let soundFailed = false;
+
+    if (soundUrl) {
       try {
-        await audio.play();
-        setAudioNeedsUnlock(false);
-        return;
+        preparedAudio = await prepareAlertAudio(soundUrl);
+        setAudioStatus('ready');
+        setAudioStatusMessage('Suara siap — menampilkan notifikasi');
       } catch (audioError) {
-        console.error('[SociaBuzz] Alert audio could not be played:', audioError);
-        if (!fallbackToDefault) return;
+        soundFailed = true;
+        console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
+        setAudioStatus('error');
+        setAudioStatusMessage(audioError instanceof Error ? audioError.message : 'File suara gagal dimuat');
       }
     }
 
-    if (!fallbackToDefault) return;
-    try {
-      await playDefaultAlertSound();
-    } catch (audioError) {
-      console.error('[SociaBuzz] Alert sound could not be played:', audioError);
-      setAudioNeedsUnlock(true);
+    if (!soundUrl && currentConfig.useCustomSound) {
+      soundFailed = true;
+      setAudioStatus('error');
+      setAudioStatusMessage('Suara custom aktif tetapi file belum dipilih');
     }
-  }, [playDefaultAlertSound]);
+
+    setAlert(nextAlert);
+    setVisible(true);
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    let soundPlayback: Promise<void>;
+    if (preparedAudio) {
+      soundPlayback = playPreparedAudio(preparedAudio).then(playedToEnd => {
+        if (!playedToEnd) soundFailed = true;
+      });
+    } else if (!currentConfig.useCustomSound) {
+      setAudioStatus('playing');
+      setAudioStatusMessage('Suara donasi sedang diputar');
+      setAudioProgress(0);
+      soundPlayback = playDefaultAlertSound()
+        .then(() => {
+          soundFailed = false;
+        })
+        .catch((audioError: unknown) => {
+          console.error('[SociaBuzz] Default donation sound failed:', audioError);
+          soundFailed = true;
+          setAudioStatus('error');
+          setAudioStatusMessage('Audio gagal diputar — klik ikon audio untuk mencoba lagi');
+        })
+        .finally(() => setAudioProgress(null));
+    } else {
+      soundPlayback = Promise.resolve();
+    }
+
+    const minimumVisibleTime = new Promise<void>(resolve => {
+      alertTimerRef.current = window.setTimeout(resolve, currentConfig.durationMs);
+    });
+    await Promise.all([soundPlayback, minimumVisibleTime]);
+    if (alertTimerRef.current !== null) {
+      window.clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = null;
+    }
+    setVisible(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setAudioProgress(null);
+    if (!soundFailed && audioUnlockedRef.current) {
+      setAudioStatus('ready');
+      setAudioStatusMessage('Audio siap');
+    }
+    processingAlertRef.current = false;
+    if (alertQueueRef.current.length > 0) void processAlertQueue();
+  }, [playDefaultAlertSound, playPreparedAudio, prepareAlertAudio]);
+
+  useEffect(() => {
+    processAlertQueueRef.current = () => { void processAlertQueue(); };
+  }, [processAlertQueue]);
 
   useEffect(() => {
     void fetch('/api/sociabuzz/config')
@@ -238,7 +427,7 @@ export default function SociabuzzPage() {
         const payload = JSON.parse(event.data);
         if (payload.type !== 'sociabuzz') return;
         const data = payload.data as Partial<AlertData>;
-        setAlert({
+        const incomingAlert: AlertData = {
           amount: typeof data.amount === 'string' ? data.amount : '0',
           supporter: typeof data.supporter === 'string' ? data.supporter : 'Supporter',
           message: typeof data.message === 'string' ? data.message : '',
@@ -246,43 +435,24 @@ export default function SociabuzzPage() {
           soundUrl: typeof data.soundUrl === 'string' ? data.soundUrl : undefined,
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
           raw: data.raw,
-        });
-        setVisible(true);
-        const currentConfig = configRef.current;
-        const mediaAudioUrl = typeof data.mediaUrl === 'string' &&
-          /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(data.mediaUrl)
-          ? data.mediaUrl
-          : undefined;
-        if (currentConfig.useCustomSound) {
-          if (currentConfig.customSoundUrl) {
-            void playAlertSound(currentConfig.customSoundUrl, false);
-          } else {
-            console.error('[SociaBuzz] Custom sound is enabled but no custom sound file is configured.');
-            setError('Suara custom aktif, tetapi file suara belum dipilih. Pilih file lalu simpan pengaturan.');
-          }
-        } else {
-          void playAlertSound(typeof data.soundUrl === 'string' ? data.soundUrl : mediaAudioUrl);
-        }
+        };
+        alertQueueRef.current.push(incomingAlert);
+        if (audioUnlockedRef.current) processAlertQueueRef.current();
       } catch (parseError) {
         console.error('[SociaBuzz] Could not parse incoming event:', parseError);
       }
     };
     source.onerror = (event) => console.warn('[SociaBuzz] Event stream connection issue:', event);
     return () => source.close();
-  }, [playAlertSound]);
+  }, []);
 
   useEffect(() => () => {
+    if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
     audioRef.current?.pause();
     void audioContextRef.current?.close().catch((audioError: unknown) => {
       console.error('[SociaBuzz] Audio context could not be closed:', audioError);
     });
   }, []);
-
-  useEffect(() => {
-    if (!visible) return;
-    const timer = window.setTimeout(() => setVisible(false), config.durationMs);
-    return () => window.clearTimeout(timer);
-  }, [visible, alert, config.durationMs]);
 
   const previewHtml = useMemo(() => {
     if (!alert) return '';
@@ -447,16 +617,36 @@ export default function SociabuzzPage() {
           </button>
         </>
       )}
-      {audioNeedsUnlock && (
+      <div className="fixed bottom-5 left-1/2 z-40 w-[min(92vw,360px)] -translate-x-1/2">
         <button
           type="button"
           onClick={unlockAudio}
-          className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg border border-amber-300/40 bg-slate-950/90 px-4 py-2 text-xs font-semibold text-amber-100 shadow-lg backdrop-blur"
+          aria-label={audioStatusMessage}
+          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold shadow-lg backdrop-blur ${
+            audioStatus === 'error'
+              ? 'border-red-300/40 bg-red-950/90 text-red-100'
+              : audioStatus === 'locked'
+                ? 'border-amber-300/40 bg-slate-950/90 text-amber-100'
+                : 'border-emerald-300/30 bg-slate-950/85 text-emerald-100'
+          }`}
         >
-          Klik untuk mengaktifkan suara alert
+          {audioStatus === 'checking' || audioStatus === 'playing'
+            ? <LoaderCircle size={16} className="shrink-0 animate-spin" />
+            : audioStatus === 'ready'
+              ? <Volume2 size={16} className="shrink-0" />
+              : <VolumeX size={16} className="shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">{audioStatusMessage}</span>
+          {audioProgress !== null && <span className="shrink-0 tabular-nums">{audioProgress}%</span>}
         </button>
-      )}
-
+        {(audioStatus === 'checking' || audioStatus === 'playing') && (
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-950/80">
+            <div
+              className={`h-full rounded-full bg-emerald-400 transition-[width] duration-150 ${audioProgress === null ? 'w-1/3 animate-pulse' : ''}`}
+              style={audioProgress === null ? undefined : { width: `${audioProgress}%` }}
+            />
+          </div>
+        )}
+      </div>
       {settingsOpen && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-3 backdrop-blur-sm sm:items-center">
           <section className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 text-slate-100 shadow-2xl">

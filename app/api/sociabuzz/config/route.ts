@@ -29,10 +29,12 @@ function isValidAlertJavascript(javascript: unknown): javascript is string {
 export async function GET() {
   const config = getSetting(CONFIG_KEY, {});
   const safeConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
-  const customSoundUrl = typeof safeConfig.customSoundUrl === 'string' &&
-    safeConfig.customSoundUrl.length <= 2048
-    ? safeConfig.customSoundUrl
-    : '';
+  const savedCustomSoundUrl = typeof safeConfig.customSoundUrl === 'string' ? safeConfig.customSoundUrl : '';
+  const customSoundUrl = savedCustomSoundUrl.startsWith('/uploads/')
+    ? `/api${savedCustomSoundUrl}`
+    : savedCustomSoundUrl.length <= 2048
+      ? savedCustomSoundUrl
+      : '';
   return NextResponse.json({
     mode: safeConfig.mode === 'custom' ? 'custom' : 'default',
     html: isValidAlertHtml(safeConfig.html) ? safeConfig.html : DEFAULT_HTML,
@@ -94,7 +96,7 @@ export async function POST(req: Request) {
       typeof customSoundUrl !== 'string' ||
       customSoundUrl.length > 2048 ||
       (customSoundUrl !== '' && !(
-        /^\/uploads\/[A-Za-z0-9._-]+$/.test(customSoundUrl) ||
+        /^\/api\/uploads\/[A-Za-z0-9._-]+$/.test(customSoundUrl) ||
         /^https:\/\/[^\s]+$/i.test(customSoundUrl)
       ))
     ) {
