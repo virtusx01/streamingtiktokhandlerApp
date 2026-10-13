@@ -11,6 +11,7 @@
     "db:migrate:deploy": "node scripts/prisma-migrate-deploy.cjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1150.0",
     "@prisma/client": "^6.19.0",
     "@supabase/supabase-js": "^2.115.0",
     "@types/pg": "^8.23.1",
