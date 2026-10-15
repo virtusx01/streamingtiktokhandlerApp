@@ -22,6 +22,9 @@ const CUSTOM_PAYLOAD_KEYS = new Set([
   'username', 'nickname', 'display_name', 'sender', 'sender_name', 'senderName',
   'from_name', 'fromName', 'comment', 'supporter_message', 'supporterMessage',
   'gifLink', 'mediaUrl', 'media_url', 'media',
+  'share_url', 'shareUrl', 'share_link', 'shareLink', 'video_url', 'videoUrl',
+  'shared_url', 'sharedUrl', 'shared_link', 'sharedLink', 'post_url', 'postUrl',
+  'permalink', 'tiktok_url', 'instagram_url', 'youtube_url', 'url', 'link',
   'image_url', 'imageUrl', 'fromText', 'from_text', 'from_label_text',
   'quantity', 'gift_name', 'item', 'item_name', 'giftName', 'sound_url',
   'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
@@ -159,6 +162,44 @@ function firstHttpsUrl(objects: JsonObject[], keys: string[]): string {
     if (url) return url;
   }
   return '';
+}
+
+function isSupportedShareUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return false;
+    const hostname = url.hostname.toLowerCase();
+    return hostname === 'youtu.be' ||
+      hostname === 'youtube.com' ||
+      hostname.endsWith('.youtube.com') ||
+      hostname === 'youtube-nocookie.com' ||
+      hostname.endsWith('.youtube-nocookie.com') ||
+      hostname === 'tiktok.com' ||
+      hostname.endsWith('.tiktok.com') ||
+      hostname === 'instagram.com' ||
+      hostname.endsWith('.instagram.com');
+  } catch {
+    return false;
+  }
+}
+
+function firstSocialShareUrl(objects: JsonObject[], message: string): string {
+  const keys = new Set([
+    'share_url', 'shareurl', 'share_link', 'sharelink', 'shared_url', 'sharedurl',
+    'shared_link', 'sharedlink', 'video_url', 'videourl', 'post_url', 'posturl',
+    'permalink', 'tiktok_url', 'instagram_url', 'youtube_url', 'url', 'link',
+  ]);
+
+  for (const object of objects) {
+    for (const [key, value] of Object.entries(object)) {
+      if (keys.has(key.toLowerCase()) && typeof value === 'string' && isSupportedShareUrl(value)) {
+        return new URL(value).toString();
+      }
+    }
+  }
+
+  const messageUrls = message.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+  return messageUrls.find(isSupportedShareUrl) ?? '';
 }
 
 function valueAsString(value: unknown, fallback: string, maxLength: number): string {
@@ -320,6 +361,7 @@ export async function POST(req: Request) {
       '',
       2000,
     );
+    const shareUrl = firstSocialShareUrl(objects, message);
     const soundUrl = firstHttpsUrl(objects, [
       'sound_url', 'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
       'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
@@ -338,7 +380,7 @@ export async function POST(req: Request) {
       receivedAt,
       eventType: valueAsString(firstValue(objects, ['event_type', 'eventType', 'type', 'action']), 'donation', 80),
       payloadFields: summarizePayload(parsedBody),
-      mapped: { amount: formattedAmount, supporter, message, mediaUrl, soundUrl, fromText },
+      mapped: { amount: formattedAmount, supporter, message, mediaUrl, shareUrl, soundUrl, fromText },
     };
     const existingLogs: unknown = getSetting(WEBHOOK_LOGS_KEY, []);
     const logs = Array.isArray(existingLogs) ? existingLogs : [];
@@ -349,6 +391,7 @@ export async function POST(req: Request) {
       supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'sender_name', 'senderName', 'from_name', 'fromName', 'name', 'username', 'nickname', 'display_name', 'supporter', 'sender']) ?? null,
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
       mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
+      shareUrl: shareUrl || null,
       soundUrl: soundUrl || null,
       fromText: firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']) ?? null,
       payload: selectCustomPayload(parsedBody),
@@ -360,6 +403,7 @@ export async function POST(req: Request) {
         supporter,
         message,
         mediaUrl,
+        shareUrl,
         soundUrl,
         fromText,
         raw: rawAlert,

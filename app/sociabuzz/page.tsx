@@ -33,6 +33,7 @@ type AlertData = {
   supporter: string;
   message: string;
   mediaUrl: string;
+  shareUrl?: string;
   soundUrl?: string;
   fromText?: string;
   raw?: {
@@ -40,6 +41,7 @@ type AlertData = {
     supporter: string | number | null;
     message: string | number | null;
     mediaUrl: string | number | null;
+    shareUrl?: string | null;
     soundUrl?: string | null;
     fromText: string | number | null;
     payload: unknown;
@@ -113,6 +115,7 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
     supporter: alert.supporter,
     message: alert.message,
     mediaUrl: alert.mediaUrl,
+    shareUrl: alert.shareUrl ?? '',
     soundUrl: alert.soundUrl ?? null,
     fromText: alert.fromText ?? 'mengirim',
     sound: soundUrl,
@@ -122,7 +125,7 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
   return `<!doctype html><html><head><meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
     <style>${safeCss}</style></head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
@@ -650,6 +653,7 @@ export default function SociabuzzPage() {
           supporter: typeof data.supporter === 'string' ? data.supporter : 'Supporter',
           message: typeof data.message === 'string' ? data.message : '',
           mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : '',
+          shareUrl: typeof data.shareUrl === 'string' ? data.shareUrl : undefined,
           soundUrl: typeof data.soundUrl === 'string' ? data.soundUrl : undefined,
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
           raw: data.raw,
@@ -1012,11 +1016,11 @@ export default function SociabuzzPage() {
                       onChange={(event) => setConfig((current) => ({ ...current, javascript: event.target.value }))}
                       rows={8}
                       spellCheck={false}
-                      placeholder={'// Data tersedia di window.sociabuzz\nconst { amount, supporter, message, payload } = window.sociabuzz;\n\n// {{sound}} menjadi URL suara custom atau "" jika suara tidak dipilih.\nconst soundUrl = {{sound}};\nif (soundUrl) new Audio(soundUrl).play().catch(console.error);\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
+                      placeholder={'// Data tersedia di window.sociabuzz, termasuk shareUrl dan payload.\nconst { amount, supporter, message, shareUrl, payload } = window.sociabuzz;\n\n// {{sound}} menjadi URL suara custom atau "" jika suara tidak dipilih.\nconst soundUrl = {{sound}};\nif (soundUrl) new Audio(soundUrl).play().catch(console.error);\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Contoh: <code>{'const soundUrl = {{sound}}; if (soundUrl) { new Audio(soundUrl).play().catch(console.error); }'}</code>. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
+                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code> dan URL payload yang dikenali juga ada di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>
