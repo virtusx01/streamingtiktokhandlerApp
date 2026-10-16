@@ -71,6 +71,9 @@ type SociaBuzzOverlayOptions = {
   mediashareTTS: boolean;
   font: string;
   mediashareNSFW: boolean;
+  mediaSharePricePerSecond: number;
+  mediaShareMaxSeconds: number;
+  mediaShareMinimumAmount: number;
   customized: {
     name: boolean;
     note: boolean;
@@ -172,8 +175,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     return window.sociabuzzYouTubeApiPromise;
   };
 
-  let userRequestedPlayback = false;
-  const showSharePlayer = (startPlayback = false) => {
+  const showSharePlayer = () => {
     const shareUrl = getShareUrl();
     const options = window.sociabuzz?.overlayOptions || {};
     if (!shareUrl || !options.mediashareActive ||
@@ -213,34 +215,6 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     }
 
     const isYouTubePlayer = new URL(playerUrl).hostname === 'www.youtube.com';
-    const videoId = isYouTubePlayer ? new URL(playerUrl).pathname.split('/').filter(Boolean).pop() : '';
-    let poster = null;
-    if (isYouTubePlayer) {
-      poster = document.createElement('button');
-      poster.type = 'button';
-      poster.dataset.sociabuzzVideoPoster = 'true';
-      poster.setAttribute('aria-label', 'Putar video YouTube');
-      poster.style.cssText = 'position:absolute;inset:0;z-index:2;width:100%;height:100%;padding:0;border:0;border-radius:12px;background:#111;cursor:pointer;overflow:hidden';
-      const thumbnail = document.createElement('img');
-      thumbnail.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId || '') + '/hqdefault.jpg';
-      thumbnail.alt = '';
-      thumbnail.style.cssText = 'width:100%;height:100%;object-fit:cover';
-      thumbnail.addEventListener('error', () => thumbnail.remove(), { once: true });
-      const playIcon = document.createElement('span');
-      playIcon.textContent = '▶';
-      playIcon.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:48px;border-radius:14px;background:#f03;color:white;font:32px/48px sans-serif;text-align:center;box-shadow:0 2px 8px #0008';
-      poster.append(thumbnail, playIcon);
-      poster.addEventListener('click', () => {
-        userRequestedPlayback = true;
-        if (youTubePlayer) youTubePlayer.playVideo();
-      });
-    }
-    if (!startPlayback) {
-      if (poster) container.appendChild(poster);
-      container.appendChild(link);
-      return;
-    }
-
     const frame = document.createElement('iframe');
     frame.src = playerUrl;
     frame.dataset.sociabuzzSharePlayer = 'true';
@@ -248,8 +222,6 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;background:transparent';
-    let playerReady = false;
-    let youTubePlayer = null;
     const handlePlayerMessage = event => {
       if (event.source === frame.contentWindow && event.origin === 'https://www.tiktok.com' &&
           event.data?.['x-tiktok-player'] === true) {
@@ -258,6 +230,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
             { type: 'play', value: '', 'x-tiktok-player': true },
             'https://www.tiktok.com'
           );
+          window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
         } else if (event.data.type === 'onPlayerError') {
           link.textContent = 'Video tidak bisa diputar di embed — buka media';
           container.replaceChildren(link);
@@ -270,6 +243,9 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     }
     frame.addEventListener('load', () => {
       if (!isYouTubePlayer) {
+        if (new URL(playerUrl).hostname === 'www.instagram.com') {
+          window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
+        }
         window.setTimeout(() => {
           const status = container.querySelector('[data-sociabuzz-player-status]');
           if (status) status.remove();
@@ -287,21 +263,19 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
     container.style.position = 'relative';
     container.append(frame, status, link);
-    if (poster) container.appendChild(poster);
     if (isYouTubePlayer) {
       void loadYouTubeApi().then(YT => {
         if (!frame.isConnected) return;
-        youTubePlayer = new YT.Player(frame, {
+        new YT.Player(frame, {
           events: {
             onReady: event => {
-              playerReady = true;
               event.target.mute();
-              if (userRequestedPlayback || frame.src.includes('autoplay=1')) event.target.playVideo();
+              event.target.playVideo();
             },
             onStateChange: event => {
               if (event.data !== 1) return;
-              poster.remove();
               status.remove();
+              window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
             },
             onError: () => {
               status.textContent = 'Video tidak dapat diputar — gunakan tautan di bawah';
@@ -310,6 +284,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
         });
       }).catch(error => {
         console.error('[SociaBuzz] YouTube player could not be initialized:', error);
+        window.sociabuzzYouTubeApiPromise = null;
         status.textContent = 'Player tidak tersedia — klik tautan untuk membuka video';
       });
     }
@@ -319,17 +294,15 @@ const SHARE_MEDIA_BRIDGE = `(() => {
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
     if (event.data?.type === 'sociabuzz:tts-finished') {
-      showSharePlayer(true);
+      showSharePlayer();
     } else if (event.data?.type === 'sociabuzz:alert-hide') {
       if (activePlayerMessageHandler) {
         window.removeEventListener('message', activePlayerMessageHandler);
         activePlayerMessageHandler = null;
       }
-      window.sociabuzzYouTubeApiPromise = null;
       document.querySelector('.custom-media')?.replaceChildren();
     }
   });
-  showSharePlayer(false);
 })();`;
 
 const DEFAULT_OVERLAY_OPTIONS: SociaBuzzOverlayOptions = {
@@ -343,6 +316,9 @@ const DEFAULT_OVERLAY_OPTIONS: SociaBuzzOverlayOptions = {
   mediashareTTS: true,
   font: '',
   mediashareNSFW: false,
+  mediaSharePricePerSecond: 100,
+  mediaShareMaxSeconds: 300,
+  mediaShareMinimumAmount: 1000,
   customized: { name: false, note: false, from: false, font: false },
 };
 
@@ -361,6 +337,12 @@ function parseOverlayToggle(value: string | null, fallback: boolean): boolean {
   return value === '1' || value.toLowerCase() === 'true';
 }
 
+function parsePositiveOption(value: string | null, fallback: number, maximum: number): number {
+  if (value === null || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
+}
+
 function readSociaBuzzOverlayOptions(): SociaBuzzOverlayOptions {
   if (typeof window === 'undefined') return DEFAULT_OVERLAY_OPTIONS;
   const params = new URLSearchParams(window.location.search);
@@ -377,6 +359,21 @@ function readSociaBuzzOverlayOptions(): SociaBuzzOverlayOptions {
     mediashareTTS: parseOverlayToggle(params.get('mediashareTTS'), DEFAULT_OVERLAY_OPTIONS.mediashareTTS),
     font: validFont ? font : '',
     mediashareNSFW: parseOverlayToggle(params.get('mediashareNSFW'), DEFAULT_OVERLAY_OPTIONS.mediashareNSFW),
+    mediaSharePricePerSecond: parsePositiveOption(
+      params.get('mediasharePricePerSecond'),
+      DEFAULT_OVERLAY_OPTIONS.mediaSharePricePerSecond,
+      1_000_000,
+    ),
+    mediaShareMaxSeconds: parsePositiveOption(
+      params.get('mediashareMaxSeconds'),
+      DEFAULT_OVERLAY_OPTIONS.mediaShareMaxSeconds,
+      3600,
+    ),
+    mediaShareMinimumAmount: parsePositiveOption(
+      params.get('mediashareMinimumAmount'),
+      DEFAULT_OVERLAY_OPTIONS.mediaShareMinimumAmount,
+      1_000_000_000,
+    ),
     customized: {
       name: params.has('colorName') || params.has('alphaName'),
       note: params.has('colorNote') || params.has('alphaNote'),
@@ -384,6 +381,41 @@ function readSociaBuzzOverlayOptions(): SociaBuzzOverlayOptions {
       font: validFont,
     },
   };
+}
+
+function getMediaShareDurationMs(
+  amountText: string,
+  options: SociaBuzzOverlayOptions,
+  fallbackMs: number,
+): number | null {
+  const match = /^\s*([A-Z]{3})?\s*([0-9][0-9.,\s]*)/i.exec(amountText);
+  if (!match) return fallbackMs;
+
+  const currency = (match[1] || '').toUpperCase();
+  let numeric = match[2].replace(/\s/g, '');
+  const hasIdrCurrency = currency === 'IDR';
+  const lastSeparator = Math.max(numeric.lastIndexOf('.'), numeric.lastIndexOf(','));
+  if (lastSeparator >= 0) {
+    const decimalDigits = numeric.length - lastSeparator - 1;
+    const hasBothSeparators = numeric.includes('.') && numeric.includes(',');
+    if (!hasIdrCurrency && decimalDigits > 0 && decimalDigits <= 2) {
+      const decimal = numeric.slice(lastSeparator + 1);
+      numeric = `${numeric.slice(0, lastSeparator).replace(/[.,]/g, '')}.${decimal}`;
+    } else if (!hasBothSeparators && !hasIdrCurrency && decimalDigits > 2) {
+      numeric = numeric.replace(/[.,]/g, '');
+    } else {
+      numeric = numeric.replace(/[.,]/g, '');
+    }
+  }
+
+  const amount = Number(numeric);
+  if (!Number.isFinite(amount)) return fallbackMs;
+  if (amount < options.mediaShareMinimumAmount) return null;
+  const seconds = Math.min(
+    options.mediaShareMaxSeconds,
+    Math.floor(amount / options.mediaSharePricePerSecond),
+  );
+  return seconds > 0 ? seconds * 1000 : null;
 }
 
 function overlayColor(color: string, alpha: number): string {
@@ -906,8 +938,40 @@ export default function SociabuzzPage() {
       const shareMediaVisibleTime = speechPlayback.then(() => {
         if (!overlayOptions.mediashareActive || !nextAlert.shareUrl ||
             (nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW)) return Promise.resolve();
-        alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
-        return new Promise<void>(resolve => window.setTimeout(resolve, currentConfig.durationMs));
+        const playbackDurationMs = getMediaShareDurationMs(
+          nextAlert.amount,
+          overlayOptions,
+          currentConfig.durationMs,
+        );
+        if (playbackDurationMs === null) {
+          console.warn('[SociaBuzz] Shared media amount is below its configured minimum; skipping player.');
+          return Promise.resolve();
+        }
+        return new Promise<void>(resolve => {
+          const timers: { startup?: number; duration?: number } = {};
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (timers.duration !== undefined) window.clearTimeout(timers.duration);
+            if (timers.startup !== undefined) window.clearTimeout(timers.startup);
+            window.removeEventListener('message', handleMediaStarted);
+            resolve();
+          };
+          const beginPlaybackWindow = () => {
+            if (settled || timers.duration !== undefined) return;
+            if (timers.startup !== undefined) window.clearTimeout(timers.startup);
+            timers.duration = window.setTimeout(finish, playbackDurationMs);
+          };
+          const handleMediaStarted = (event: MessageEvent) => {
+            if (event.source !== alertFrameRef.current?.contentWindow ||
+                event.data?.type !== 'sociabuzz:media-started') return;
+            beginPlaybackWindow();
+          };
+          window.addEventListener('message', handleMediaStarted);
+          timers.startup = window.setTimeout(finish, 20000);
+          alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
+        });
       });
       await Promise.all([speechPlayback, minimumVisibleTime, shareMediaVisibleTime]);
     } catch (queueError) {

@@ -20,14 +20,11 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the alert displays a YouTube thumbnail as soon as the notification appears, then
-starts the platform's embedded player after TTS finishes. YouTube and TikTok autoplay muted to comply with browser
-autoplay restrictions. Platform privacy settings, embed permissions, or browser
-policies can still prevent playback; the original post link remains available
-as a fallback. YouTube embeds use the standard player URL, preserve the browser
-referrer required by YouTube, and show the video's official thumbnail with a
-play control until playback is confirmed. This avoids a blank/black alert when
-autoplay is blocked or the embed is unavailable.
+the alert creates the platform player after TTS finishes and attempts muted
+autoplay. Browser autoplay restrictions cannot be bypassed with a synthetic
+click; if playback is denied, the platform player remains clickable while the
+alert is visible. The overlay keeps the alert visible for the donation-funded
+playback time, then closes the player.
 
 The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
 opacity, font, embed, and share-alert TTS. For example:
@@ -42,6 +39,13 @@ disables TTS for alerts containing shared media while preserving TTS for other
 donations. `mediashareNSFW=0` blocks media only when the webhook explicitly
 marks that event as NSFW; the overlay does not attempt to classify media
 content.
+
+Share playback uses the screenshot's default pricing rule: 100 currency units
+per second, a 300-second maximum, and a 1,000-unit minimum. Values are
+calculated from the donation amount and can be overridden in the overlay URL
+with `mediasharePricePerSecond`, `mediashareMaxSeconds`, and
+`mediashareMinimumAmount`. These values must use the same currency unit as the
+donation amount.
 
 ## Render TikTok Listener with Local USB ADB
 
