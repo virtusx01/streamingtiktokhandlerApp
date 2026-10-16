@@ -34,6 +34,14 @@ The Test Alert button uses a verified public YouTube share link to exercise this
 flow. The overlay keeps the alert visible for the donation-funded playback
 time, then closes the player.
 
+SociaBuzz MediaShare events arrive on the account's Ably realtime channel, not
+necessarily in the donation webhook. The overlay subscribes using the public
+SociaBuzz auth endpoint through `/api/sociabuzz/ably-auth`; the proxy is scoped
+to the profile ID in `SOCIABUZZ_MEDIA_SHARE_PROFILE_ID` (defaults to
+`8913094574`). Set that environment variable to the matching numeric profile ID
+if using a different account, and pass the same value in the overlay URL as
+`mediashareProfileId`. The default profile ID requires no extra URL parameter.
+
 The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
 opacity, font, embed, and share-alert TTS. For example:
 
