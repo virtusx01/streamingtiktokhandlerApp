@@ -393,12 +393,6 @@ function SociaBuzzSharePlayer({
     top: rect.top,
     width: rect.width,
     height: rect.height,
-    backgroundImage: playerInfo?.videoId && !overlay.autoplay
-      ? `url("https://i.ytimg.com/vi/${playerInfo.videoId}/hqdefault.jpg")`
-      : 'none',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-    backgroundSize: 'contain',
   };
 
   if (playerInfo?.directVideo) {
@@ -439,7 +433,7 @@ function SociaBuzzSharePlayer({
       <div className="fixed z-30 overflow-hidden rounded-xl bg-black" style={style}>
         <div
           ref={playerHostRef}
-          className={`absolute inset-0 ${overlay.autoplay ? 'opacity-100' : 'opacity-0'}`}
+          className="absolute inset-0"
         />
         {playerError && (
           <a
