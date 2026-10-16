@@ -77,6 +77,148 @@ body{display:flex;align-items:center;justify-content:center;min-height:100vh;pad
 @keyframes randomShuffleMedia{0%,33.32%{background-image:url('https://xkslvfdguwvrhxetbmyw.supabase.co/storage/v1/object/public/assets/c-d-kompilasi-final.webp')}}
 @keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
 @keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}`;
+const SHARE_MEDIA_BRIDGE = `(() => {
+  const isSocialUrl = value => {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      return url.protocol === 'https:' && (
+        host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com') ||
+        host === 'tiktok.com' || host.endsWith('.tiktok.com') ||
+        host === 'instagram.com' || host.endsWith('.instagram.com')
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const getShareUrl = () => {
+    const data = window.sociabuzz || {};
+    if (isSocialUrl(data.shareUrl)) return data.shareUrl;
+    const text = typeof data.message === 'string' ? data.message : '';
+    return text.split(' ').map(value => value.trim())
+      .map(value => value.replace(/[.,!?;:]+$/, ''))
+      .find(value => value.startsWith('https://') && isSocialUrl(value)) || '';
+  };
+
+  const createEmbedUrl = shareUrl => {
+    const url = new URL(shareUrl);
+    const host = url.hostname.toLowerCase();
+    const pathParts = url.pathname.split('/').filter(Boolean);
+    if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      const pathVideoId = ['shorts', 'embed', 'live'].includes(pathParts[0])
+        ? pathParts[1]
+        : host === 'youtu.be' ? pathParts[0] : '';
+      const videoId = url.searchParams.get('v') || pathVideoId || '';
+      return videoId
+        ? 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(videoId) + '?autoplay=1&mute=1&playsinline=1'
+        : '';
+    }
+    if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
+      const videoIndex = pathParts.indexOf('video');
+      const videoId = videoIndex >= 0 ? pathParts[videoIndex + 1] || '' : '';
+      return videoId
+        ? 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?autoplay=1&muted=1&loop=1&controls=1'
+        : '';
+    }
+    if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+      const mediaTypeIndex = pathParts.findIndex(part => ['reel', 'p', 'tv'].includes(part));
+      const mediaType = mediaTypeIndex >= 0 ? pathParts[mediaTypeIndex] : '';
+      const shortcode = mediaTypeIndex >= 0 ? pathParts[mediaTypeIndex + 1] : '';
+      return mediaType && shortcode
+        ? 'https://www.instagram.com/' + mediaType + '/' + encodeURIComponent(shortcode) + '/embed/?autoplay=1&muted=1'
+        : '';
+    }
+    return '';
+  };
+
+  const showSharePlayer = () => {
+    const shareUrl = getShareUrl();
+    if (!shareUrl) return;
+
+    let container = document.querySelector('.custom-media');
+    if (!container) {
+      const media = document.querySelector('.custom-video');
+      container = document.createElement('div');
+      container.className = 'custom-media';
+      if (media) media.replaceWith(container);
+      else {
+        const card = document.querySelector('.cyber-card');
+        if (card) card.before(container);
+        else document.body.prepend(container);
+      }
+    }
+
+    container.replaceChildren();
+    container.style.backgroundImage = 'none';
+    container.style.animation = 'none';
+    container.style.width = 'min(100%, 480px)';
+    container.style.height = '270px';
+    container.style.aspectRatio = '16 / 9';
+
+    const playerUrl = createEmbedUrl(shareUrl);
+    const link = document.createElement('a');
+    link.href = shareUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Buka media yang dibagikan';
+    link.style.cssText = 'display:block;margin-top:6px;color:#fff;text-align:center;text-decoration:underline;font:12px sans-serif';
+
+    if (!playerUrl) {
+      container.appendChild(link);
+      return;
+    }
+
+    const frame = document.createElement('iframe');
+    frame.src = playerUrl;
+    frame.dataset.sociabuzzSharePlayer = 'true';
+    frame.title = 'Media yang dibagikan';
+    frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;background:transparent';
+    frame.addEventListener('load', () => {
+      window.setTimeout(() => {
+        const status = container.querySelector('[data-sociabuzz-player-status]');
+        if (status) status.remove();
+      }, 1000);
+    }, { once: true });
+    frame.addEventListener('error', () => {
+      link.textContent = 'Player dibatasi platform — buka media';
+      container.replaceChildren(link);
+    }, { once: true });
+    const status = document.createElement('span');
+    status.dataset.sociabuzzPlayerStatus = 'true';
+    status.textContent = 'Memuat video yang dibagikan...';
+    status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
+    container.style.position = 'relative';
+    container.append(frame, status, link);
+    if (new URL(playerUrl).hostname === 'www.tiktok.com') {
+      window.addEventListener('message', event => {
+        if (event.source !== frame.contentWindow || event.origin !== 'https://www.tiktok.com' ||
+            event.data?.['x-tiktok-player'] !== true) return;
+        if (event.data.type === 'onPlayerReady') {
+          frame.contentWindow?.postMessage(
+            { type: 'play', value: '', 'x-tiktok-player': true },
+            'https://www.tiktok.com'
+          );
+        } else if (event.data.type === 'onPlayerError') {
+          link.textContent = 'Video tidak bisa diputar di embed — buka media';
+          container.replaceChildren(link);
+        }
+      });
+    }
+  };
+
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent) return;
+    if (event.data?.type === 'sociabuzz:tts-finished') {
+      showSharePlayer();
+    } else if (event.data?.type === 'sociabuzz:alert-hide') {
+      document.querySelector('[data-sociabuzz-share-player]')?.remove();
+    }
+  });
+})();`;
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -168,7 +310,8 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
         trackedAudios.forEach(audio => audio.pause());
       });
     })();</script>
-    <script>${safeJavascript}</script></body></html>`;
+    <script>${safeJavascript}</script>
+    <script>${SHARE_MEDIA_BRIDGE}</script></body></html>`;
 }
 
 export default function SociabuzzPage() {
@@ -561,7 +704,12 @@ export default function SociabuzzPage() {
           setAudioStatusMessage('TTS gagal — periksa izin suara browser');
         }
       });
-      await Promise.all([speechPlayback, minimumVisibleTime]);
+      const shareMediaVisibleTime = speechPlayback.then(() => {
+        if (!nextAlert.shareUrl) return Promise.resolve();
+        alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
+        return new Promise<void>(resolve => window.setTimeout(resolve, currentConfig.durationMs));
+      });
+      await Promise.all([speechPlayback, minimumVisibleTime, shareMediaVisibleTime]);
     } catch (queueError) {
       soundFailed = true;
       console.error('[SociaBuzz] Alert playback failed:', queueError);
@@ -570,6 +718,7 @@ export default function SociabuzzPage() {
         window.clearTimeout(alertTimerRef.current);
         alertTimerRef.current = null;
       }
+      alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:alert-hide' }, '*');
       setVisible(false);
       if (audioRef.current) {
         audioRef.current.pause();
@@ -1020,7 +1169,7 @@ export default function SociabuzzPage() {
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code> dan URL payload yang dikenali juga ada di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
+                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code>; player YouTube, TikTok, atau Instagram akan otomatis menggantikan <code>.custom-media</code> setelah TTS selesai. URL payload yang dikenali juga tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>

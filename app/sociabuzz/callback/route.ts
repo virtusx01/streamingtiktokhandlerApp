@@ -188,6 +188,7 @@ function firstSocialShareUrl(objects: JsonObject[], message: string): string {
     'share_url', 'shareurl', 'share_link', 'sharelink', 'shared_url', 'sharedurl',
     'shared_link', 'sharedlink', 'video_url', 'videourl', 'post_url', 'posturl',
     'permalink', 'tiktok_url', 'instagram_url', 'youtube_url', 'url', 'link',
+    'gif_link', 'giflink', 'mediaurl', 'media_url', 'media', 'image_url', 'imageurl',
   ]);
 
   for (const object of objects) {

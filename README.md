@@ -19,6 +19,13 @@ browser voice. Voice, speed, and pitch can be selected in SociaBuzz settings.
 See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
+When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
+the alert replaces `.custom-media` with the platform's official embedded player
+after TTS finishes. YouTube and TikTok autoplay muted to comply with browser
+autoplay restrictions. Platform privacy settings, embed permissions, or browser
+policies can still prevent playback; the original post link remains available
+in the alert as a fallback.
+
 ## Render TikTok Listener with Local USB ADB
 
 The TikTok listener and event processing can run on Render while a small agent on
