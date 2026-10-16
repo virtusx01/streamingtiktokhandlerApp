@@ -20,15 +20,15 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the platform player is embedded inside the existing media slot in the custom
-alert iframe. Playback starts after TTS. The embed fills the existing
-`.custom-media` slot; its position and dimensions are controlled by alert
-HTML/CSS, without the system moving or resizing it. The default slot measures
-220 × 180 px. Keep one `.custom-media` inside `.cyber-alert`, before
+the player appears centered over the existing `.custom-media` slot after TTS.
+The alert HTML/CSS keep control of that slot; the system does not move or resize
+it. The default slot measures 220 × 180 px. Player width and height are
+independently configurable in SociaBuzz settings. The third-party player is
+hosted by the overlay page so YouTube receives its required page referrer,
+while custom alert JavaScript remains sandboxed. Keep one `.custom-media`
+inside `.cyber-alert`, before
 `.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
-are supported. The alert document uses an opaque `data:` origin so custom
-JavaScript cannot access the main page; the nested platform embed is allowed
-to run its player scripts. Browser autoplay
+are supported. Browser autoplay
 restrictions cannot be bypassed with a synthetic click, so the player remains
 clickable if autoplay is denied. YouTube links using either the standard `v`
 query or SociaBuzz's `videoId` query are recognized.
@@ -41,9 +41,8 @@ The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
 It is shown in the media slot only when an alert has no shared/media URL.
-The shared embed is inserted inside the existing `.custom-media` slot;
-it replaces the default image/video in that slot when a share URL arrives.
-The default template places it above `.cyber-card` inside `.cyber-alert`.
+When a share URL arrives, the player overlays the default media at that slot.
+The default template places the slot above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player.
 
