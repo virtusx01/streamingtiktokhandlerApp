@@ -20,24 +20,25 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the overlay prepares the player while the donation alert and TTS run, then
-requests playback when TTS finishes. The platform player is rendered by the parent overlay,
-outside the sandboxed custom-alert iframe. Browser autoplay restrictions cannot
-be bypassed with a synthetic click; if playback is denied, the player remains
-clickable while the alert is visible. The media slot is moved above the alert
-card and kept at a responsive 16:9 landscape ratio. Custom alert HTML without a
-`.custom-media`/`.custom-video` element gets a default media slot. If a platform
-rejects the embed, the overlay displays a link to open the original share URL.
-YouTube links using either the standard `v` query or SociaBuzz's `videoId`
-query are recognized.
+the platform player is embedded inside the existing media slot in the custom
+alert iframe. Playback starts after TTS. The player keeps a 16:9 aspect ratio
+and scales to the slot's width; the alert HTML/CSS control the slot's position
+and layout. The system does not create or move the slot. Include
+`{{mediaMarkup}}` before `.cyber-card` inside `.cyber-alert`, or provide a
+`.custom-media`/`.custom-video` slot in custom HTML. Browser autoplay
+restrictions cannot be bypassed with a synthetic click, so the player remains
+clickable if autoplay is denied. YouTube links using either the standard `v`
+query or SociaBuzz's `videoId` query are recognized.
 The SociaBuzz settings panel contains **Test Alert Biasa** and **Test MediaShare**;
 the settings close after sending so each test is shown live by `/sociabuzz`.
 The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
-It is shown in the 16:9 slot only when an alert has no shared/media URL.
-The MediaShare player matches SociaBuzz's 16:9 embed size, up to 560 px wide
-and scaled down on narrower screens.
+It is shown in the media slot only when an alert has no shared/media URL.
+The shared embed is inserted inside the existing `.custom-media` slot;
+its dimensions follow that slot, while HTML and custom CSS control the slot's
+position, width, and layout. The default template places it above
+`.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player.
 
