@@ -339,6 +339,19 @@ body{display:flex;align-items:center;justify-content:center;min-height:100vh;pad
 @keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
 @keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}`;
 const SHARE_MEDIA_BRIDGE = String.raw`(() => {
+  let positionSyncGeneration = 0;
+  let positionSyncObserver = null;
+  let positionSyncTimeout = 0;
+  let positionSyncFrame = 0;
+
+  const stopPositionSync = () => {
+    positionSyncGeneration += 1;
+    positionSyncObserver?.disconnect();
+    positionSyncObserver = null;
+    window.clearTimeout(positionSyncTimeout);
+    window.cancelAnimationFrame(positionSyncFrame);
+  };
+
   const isSocialUrl = value => {
     try {
       const url = new URL(value);
@@ -441,15 +454,35 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       notifyUnavailable();
       return;
     }
+    stopPositionSync();
+    const syncGeneration = positionSyncGeneration;
     applyMediaSlotSize(slot, true);
-    const rect = slot.getBoundingClientRect();
-    window.parent.postMessage({
-      type: action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
-      shareUrl,
-      startSeconds,
-      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    }, '*');
+    const publishPosition = () => {
+      if (syncGeneration !== positionSyncGeneration || !slot.isConnected) return;
+      const rect = slot.getBoundingClientRect();
+      window.parent.postMessage({
+        type: action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
+        shareUrl,
+        startSeconds,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }, '*');
+    };
+    publishPosition();
+    if (typeof ResizeObserver !== 'undefined') {
+      positionSyncObserver = new ResizeObserver(publishPosition);
+      positionSyncObserver.observe(slot);
+      positionSyncTimeout = window.setTimeout(stopPositionSync, 2000);
+    }
+    let frameCount = 0;
+    const followLayoutAnimation = () => {
+      if (syncGeneration !== positionSyncGeneration || !slot.isConnected || frameCount >= 60) return;
+      publishPosition();
+      frameCount += 1;
+      positionSyncFrame = window.requestAnimationFrame(followLayoutAnimation);
+    };
+    positionSyncFrame = window.requestAnimationFrame(followLayoutAnimation);
+    document.fonts?.ready.then(publishPosition);
   };
 
   const requestPlayer = action => {
@@ -482,6 +515,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       }
     }
     if (event.data?.type === 'sociabuzz:alert-hide') {
+      stopPositionSync();
       getMediaSlot()?.replaceChildren();
     }
   });
