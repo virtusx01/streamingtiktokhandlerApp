@@ -14,7 +14,7 @@ export async function POST(req: Request) {
       amount: '25000',
       supporter: 'Supporter Test',
       message: 'Semangat terus stream-nya!',
-      mediaUrl: 'https://example.com/media.mp4',
+      shareUrl: 'https://www.youtube.com/watch?v=fTKqtvXjkvo',
       fromText: 'mengirim',
       isTest: true,
       timestamp: Date.now(),

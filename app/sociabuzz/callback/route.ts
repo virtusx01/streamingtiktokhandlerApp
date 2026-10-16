@@ -218,7 +218,18 @@ function firstSocialShareUrl(objects: JsonObject[], message: string): string {
   }
 
   const messageUrls = message.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
-  return messageUrls.find(isSupportedShareUrl) ?? '';
+  const messageUrl = messageUrls.find(isSupportedShareUrl);
+  if (messageUrl) return new URL(messageUrl.replace(/[.,;!?]+$/, '')).toString();
+
+  for (const object of objects) {
+    for (const value of Object.values(object)) {
+      if (typeof value !== 'string') continue;
+      const urls = value.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+      const url = urls.find(isSupportedShareUrl);
+      if (url) return new URL(url.replace(/[.,;!?]+$/, '')).toString();
+    }
+  }
+  return '';
 }
 
 function valueAsString(value: unknown, fallback: string, maxLength: number): string {

@@ -25,8 +25,12 @@ requests playback when TTS finishes. YouTube displays its thumbnail until
 playback is requested. The platform player is rendered by the parent overlay,
 outside the sandboxed custom-alert iframe. Browser autoplay restrictions cannot
 be bypassed with a synthetic click; if playback is denied, the player remains
-clickable while the alert is visible. The overlay keeps the alert visible for
-the donation-funded playback time, then closes the player.
+clickable while the alert is visible. Custom alert HTML without a
+`.custom-media`/`.custom-video` element gets a default media slot. If a platform
+rejects the embed, the overlay displays a link to open the original share URL.
+The Test Alert button uses a verified public YouTube share link to exercise this
+flow. The overlay keeps the alert visible for the donation-funded playback
+time, then closes the player.
 
 The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
 opacity, font, embed, and share-alert TTS. For example:
