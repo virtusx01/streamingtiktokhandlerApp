@@ -123,7 +123,7 @@ function normalizeSupportedShareUrl(value: string): string | null {
   const candidates = value.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [value.trim()];
   for (const candidate of candidates) {
     try {
-      const url = new URL(candidate.replace(/[.,;!?]+$/, ''));
+      const url = new URL(candidate.replace(/&amp;/gi, '&').replace(/[.,;!?]+$/, ''));
       const host = url.hostname.toLowerCase();
       const supportedHost = host === 'youtu.be' ||
         host === 'youtube.com' || host.endsWith('.youtube.com') ||
@@ -161,7 +161,12 @@ function getSharePlayerUrl(shareUrl: string, autoplay: boolean): { url: string; 
     const pathVideoId = ['shorts', 'embed', 'live'].includes(pathParts[0])
       ? pathParts[1]
       : host === 'youtu.be' ? pathParts[0] : '';
-    const videoId = parsedUrl.searchParams.get('v') || pathVideoId || '';
+    const videoId =
+      parsedUrl.searchParams.get('videoId') ||
+      parsedUrl.searchParams.get('video_id') ||
+      parsedUrl.searchParams.get('v') ||
+      pathVideoId ||
+      '';
     if (!/^[\w-]{11}$/.test(videoId)) return null;
     return { url: 'https://www.youtube.com/embed/' + videoId, videoId };
   }
@@ -235,7 +240,11 @@ function SociaBuzzSharePlayer({
         playerVars: {
           autoplay: 0,
           controls: 1,
+          cc_load_policy: 0,
+          disablekb: 0,
           enablejsapi: 1,
+          fs: 1,
+          iv_load_policy: 3,
           playsinline: 1,
           rel: 0,
           origin: window.location.origin,

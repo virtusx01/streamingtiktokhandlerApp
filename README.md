@@ -28,6 +28,8 @@ be bypassed with a synthetic click; if playback is denied, the player remains
 clickable while the alert is visible. Custom alert HTML without a
 `.custom-media`/`.custom-video` element gets a default media slot. If a platform
 rejects the embed, the overlay displays a link to open the original share URL.
+YouTube links using either the standard `v` query or SociaBuzz's `videoId`
+query are recognized.
 The Test Alert button uses a verified public YouTube share link to exercise this
 flow. The overlay keeps the alert visible for the donation-funded playback
 time, then closes the player.
