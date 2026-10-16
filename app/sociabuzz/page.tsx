@@ -448,6 +448,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       shareUrl,
       startSeconds,
       rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
     }, '*');
   };
 
@@ -906,17 +907,20 @@ export default function SociabuzzPage() {
       const startSeconds = Number(event.data.startSeconds) || 0;
       const embedUrl = getSharePlayerEmbedUrl(event.data.shareUrl, startSeconds);
       const rect = event.data.rect;
+      const viewport = event.data.viewport;
       if (!embedUrl || !rect || !['left', 'top', 'width', 'height'].every(key =>
         typeof rect[key] === 'number' && Number.isFinite(rect[key])
-      ) || rect.width <= 0 || rect.height <= 0) {
+      ) || rect.width <= 0 || rect.height <= 0 ||
+          !viewport || typeof viewport.width !== 'number' || !Number.isFinite(viewport.width) || viewport.width <= 0 ||
+          typeof viewport.height !== 'number' || !Number.isFinite(viewport.height) || viewport.height <= 0) {
         notifyShareMediaEnded();
         return;
       }
       const alertFrame = alertFrameRef.current;
       if (!alertFrame) return;
       const frameRect = alertFrame.getBoundingClientRect();
-      const scaleX = frameRect.width / (alertFrame.clientWidth || window.innerWidth);
-      const scaleY = frameRect.height / (alertFrame.clientHeight || window.innerHeight);
+      const scaleX = frameRect.width / viewport.width;
+      const scaleY = frameRect.height / viewport.height;
       const slotLeft = frameRect.left + rect.left * scaleX;
       const slotTop = frameRect.top + rect.top * scaleY;
       const slotWidth = rect.width * scaleX;
