@@ -542,21 +542,14 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     const options = data.overlayOptions || {};
     if (!options.mediashareActive || (data.isNsfw === true && !options.mediashareNSFW)) return;
 
+    const alert = document.querySelector('.cyber-alert');
     let container = document.querySelector('.custom-media, .custom-video');
     if (!container) {
       container = document.createElement('div');
       container.className = 'custom-media';
-      Object.assign(container.style, {
-        width: '220px',
-        height: '180px',
-        margin: '0 auto 12px',
-        display: 'block',
-      });
-      const alert = document.querySelector('.cyber-alert');
-      const card = alert?.querySelector('.cyber-card');
-      if (card?.parentElement) card.parentElement.insertBefore(container, card);
-      else (alert || document.body).prepend(container);
     }
+    if (alert) alert.insertBefore(container, alert.firstElementChild);
+    else if (!container.isConnected) document.body.prepend(container);
 
     const rect = container.getBoundingClientRect();
     const playerRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
@@ -783,7 +776,12 @@ function createDocument(
   </style>`;
   return `<!doctype html><html><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline' https://www.youtube.com; connect-src https://www.youtube.com https://youtube.com https://*.youtube.com https://youtubei.googleapis.com https://*.googlevideo.com https://*.ytimg.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://www.instagram.com https://*.instagram.com https://*.cdninstagram.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
-    ${fontLink}<style>${safeCss}</style>${themeStyle}</head><body>${html}
+    ${fontLink}<style>${safeCss}</style>${themeStyle}<style>
+      .cyber-alert{display:flex!important;flex-direction:column!important;align-items:center!important}
+      .cyber-alert>.custom-media,.cyber-alert>.custom-video{order:-1!important;box-sizing:border-box!important;width:min(320px,90vw)!important;height:auto!important;aspect-ratio:16/9!important;flex:0 0 auto!important;margin:0 auto 12px!important;display:block!important;position:relative!important;overflow:hidden!important}
+      .cyber-alert>.custom-media{background-size:contain!important;background-repeat:no-repeat!important;background-position:center!important}
+      .cyber-alert>.custom-media img,.cyber-alert>.custom-video{object-fit:contain!important}
+    </style></head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
       const originalPlay = HTMLMediaElement.prototype.play;
@@ -855,7 +853,7 @@ export default function SociabuzzPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [testError, setTestError] = useState('');
-  const [testingAlert, setTestingAlert] = useState(false);
+  const [testingAlert, setTestingAlert] = useState<'regular' | 'mediaShare' | null>(null);
   const [uploadingCustomSound, setUploadingCustomSound] = useState(false);
   const [audioStatus, setAudioStatus] = useState<AudioStatus>('locked');
   const [audioProgress, setAudioProgress] = useState<number | null>(null);
@@ -1738,19 +1736,20 @@ export default function SociabuzzPage() {
     }
   };
 
-  const testAlert = async () => {
-    setTestingAlert(true);
+  const testAlert = async (mediaShare: boolean) => {
+    const testType = mediaShare ? 'mediaShare' : 'regular';
+    setTestingAlert(testType);
     setTestError('');
     unlockAudio();
     try {
-      const response = await fetch('/api/sociabuzz/test', { method: 'POST' });
+      const response = await fetch(`/api/sociabuzz/test${mediaShare ? '?mediaShare=1' : ''}`, { method: 'POST' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Gagal mengirim test alert.');
     } catch (testAlertError) {
       console.error('[SociaBuzz] Test alert failed:', testAlertError);
       setTestError(testAlertError instanceof Error ? testAlertError.message : 'Gagal mengirim test alert.');
     } finally {
-      setTestingAlert(false);
+      setTestingAlert(null);
     }
   };
 
@@ -1786,11 +1785,19 @@ export default function SociabuzzPage() {
         <>
           <button
             type="button"
-            onClick={() => void testAlert()}
-            disabled={testingAlert}
+            onClick={() => void testAlert(false)}
+            disabled={testingAlert !== null}
             className="fixed bottom-5 left-5 rounded-lg border border-white/15 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur hover:bg-slate-800 disabled:opacity-60"
           >
-            {testingAlert ? 'Mengirim...' : 'Test Alert'}
+            {testingAlert === 'regular' ? 'Mengirim...' : 'Test Alert Biasa'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void testAlert(true)}
+            disabled={testingAlert !== null}
+            className="fixed bottom-5 left-32 rounded-lg border border-violet-300/30 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-violet-100 shadow-lg backdrop-blur hover:bg-violet-950 disabled:opacity-60"
+          >
+            {testingAlert === 'mediaShare' ? 'Mengirim...' : 'Test MediaShare'}
           </button>
           {testError && <p role="alert" className="fixed bottom-16 left-5 max-w-xs rounded-lg bg-red-950/90 px-3 py-2 text-xs text-red-200">{testError}</p>}
           <button

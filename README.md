@@ -21,18 +21,18 @@ and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescr
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
 the overlay prepares the player while the donation alert and TTS run, then
-requests playback when TTS finishes. YouTube displays its thumbnail until
-playback is requested. The platform player is rendered by the parent overlay,
+requests playback when TTS finishes. The platform player is rendered by the parent overlay,
 outside the sandboxed custom-alert iframe. Browser autoplay restrictions cannot
 be bypassed with a synthetic click; if playback is denied, the player remains
-clickable while the alert is visible. Custom alert HTML without a
+clickable while the alert is visible. The media slot is moved above the alert
+card and kept at a responsive 16:9 landscape ratio. Custom alert HTML without a
 `.custom-media`/`.custom-video` element gets a default media slot. If a platform
 rejects the embed, the overlay displays a link to open the original share URL.
 YouTube links using either the standard `v` query or SociaBuzz's `videoId`
 query are recognized.
-The Test Alert button uses a verified public YouTube share link to exercise this
-flow. The overlay keeps the alert visible for the donation-funded playback
-time, then closes the player.
+The **Test Alert** button sends a regular alert without shared media, while
+**Test MediaShare** uses a public YouTube share URL. The overlay keeps MediaShare
+alerts visible for the donation-funded playback time, then closes the player.
 
 SociaBuzz MediaShare events arrive on the account's Ably realtime channel, not
 necessarily in the donation webhook. The overlay subscribes using the public
