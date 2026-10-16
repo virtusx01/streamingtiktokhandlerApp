@@ -26,7 +26,9 @@ alert iframe. Playback starts after TTS. The embed fills the existing
 HTML/CSS, without the system moving or resizing it. The default slot measures
 220 × 180 px. Keep one `.custom-media` inside `.cyber-alert`, before
 `.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
-are supported. Browser autoplay
+are supported. The alert document uses an opaque `data:` origin so custom
+JavaScript cannot access the main page; the nested platform embed is allowed
+to run its player scripts. Browser autoplay
 restrictions cannot be bypassed with a synthetic click, so the player remains
 clickable if autoplay is denied. YouTube links using either the standard `v`
 query or SociaBuzz's `videoId` query are recognized.

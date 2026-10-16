@@ -355,6 +355,10 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
         playsinline: '1',
         rel: '0',
       });
+      const appOrigin = (window.sociabuzz || {}).appOrigin;
+      if (typeof appOrigin === 'string' && appOrigin) {
+        params.set('widget_referrer', appOrigin);
+      }
       if (autoplay && Number.isFinite(startSeconds) && startSeconds > 0) {
         params.set('start', String(Math.floor(startSeconds)));
       }
@@ -1560,9 +1564,9 @@ export default function SociabuzzPage() {
         <iframe
           ref={alertFrameRef}
           title="SociaBuzz alert"
-          sandbox="allow-scripts allow-presentation"
+          sandbox="allow-scripts allow-same-origin allow-presentation"
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-          srcDoc={previewHtml}
+          src={`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       )}
