@@ -20,12 +20,13 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the overlay prepares the platform player while the donation alert and TTS run,
-then requests muted playback when TTS finishes. This follows the same
-cue-then-play sequence used by the SociaBuzz MediaShare player. Browser autoplay
-restrictions cannot be bypassed with a synthetic click; if playback is denied,
-the player remains clickable while the alert is visible. The overlay keeps the
-alert visible for the donation-funded playback time, then closes the player.
+the overlay prepares the player while the donation alert and TTS run, then
+requests playback when TTS finishes. YouTube displays its thumbnail until
+playback is requested. The platform player is rendered by the parent overlay,
+outside the sandboxed custom-alert iframe. Browser autoplay restrictions cannot
+be bypassed with a synthetic click; if playback is denied, the player remains
+clickable while the alert is visible. The overlay keeps the alert visible for
+the donation-funded playback time, then closes the player.
 
 The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
 opacity, font, embed, and share-alert TTS. For example:

@@ -197,17 +197,22 @@ function isSupportedShareUrl(value: string): boolean {
 }
 
 function firstSocialShareUrl(objects: JsonObject[], message: string): string {
-  const keys = new Set([
+  const preferredKeys = new Set([
     'share_url', 'shareurl', 'share_link', 'sharelink', 'shared_url', 'sharedurl',
-    'shared_link', 'sharedlink', 'video_url', 'videourl', 'post_url', 'posturl',
+    'shared_link', 'sharedlink',
+  ]);
+  const otherKeys = new Set([
+    'video_url', 'videourl', 'post_url', 'posturl',
     'permalink', 'tiktok_url', 'instagram_url', 'youtube_url', 'url', 'link',
     'gif_link', 'giflink', 'mediaurl', 'media_url', 'media', 'image_url', 'imageurl',
   ]);
 
-  for (const object of objects) {
-    for (const [key, value] of Object.entries(object)) {
-      if (keys.has(key.toLowerCase()) && typeof value === 'string' && isSupportedShareUrl(value)) {
-        return new URL(value).toString();
+  for (const keys of [preferredKeys, otherKeys]) {
+    for (const object of objects) {
+      for (const [key, value] of Object.entries(object)) {
+        if (keys.has(key.toLowerCase()) && typeof value === 'string' && isSupportedShareUrl(value)) {
+          return new URL(value).toString();
+        }
       }
     }
   }
@@ -370,12 +375,15 @@ export async function POST(req: Request) {
       '',
       2000,
     );
-    const mediaUrl = valueAsString(
+    const mediaUrlCandidate = valueAsString(
       firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']),
       '',
       2000,
     );
-    const shareUrl = firstSocialShareUrl(objects, message);
+    const mediaUrlIsShare = isSupportedShareUrl(mediaUrlCandidate);
+    const mediaUrl = mediaUrlIsShare ? '' : mediaUrlCandidate;
+    const shareUrl = firstSocialShareUrl(objects, message) ||
+      (mediaUrlIsShare ? new URL(mediaUrlCandidate).toString() : '');
     const soundUrl = firstHttpsUrl(objects, [
       'sound_url', 'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
       'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
@@ -405,7 +413,7 @@ export async function POST(req: Request) {
       amount: formattedAmount,
       supporter: firstValue(objects, ['fullname', 'full_name', 'fullName', 'supporter_name', 'supporterName', 'donor_name', 'donator_name', 'sender_name', 'senderName', 'from_name', 'fromName', 'name', 'username', 'nickname', 'display_name', 'supporter', 'sender']) ?? null,
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
-      mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
+      mediaUrl: mediaUrl || null,
       shareUrl: shareUrl || null,
       isNsfw: isNsfw ?? null,
       soundUrl: soundUrl || null,

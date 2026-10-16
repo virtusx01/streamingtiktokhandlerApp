@@ -82,6 +82,215 @@ type SociaBuzzOverlayOptions = {
   };
 };
 
+type SharePlayerRect = { left: number; top: number; width: number; height: number };
+type SharePlayerOverlay = {
+  shareUrl: string;
+  rect: SharePlayerRect;
+  autoplay: boolean;
+};
+
+type YouTubePlayer = {
+  cueVideoById(video: { videoId: string; startSeconds?: number }): void;
+  loadVideoById(video: { videoId: string; startSeconds?: number }): void;
+  mute(): void;
+  destroy(): void;
+};
+
+type YouTubeApi = {
+  Player: new (
+    target: HTMLElement,
+    options: {
+      videoId: string;
+      playerVars: Record<string, string | number>;
+      events: {
+        onReady: (event: { target: YouTubePlayer }) => void;
+        onStateChange: (event: { data: number }) => void;
+        onError: () => void;
+      };
+    },
+  ) => YouTubePlayer;
+};
+
+declare global {
+  interface Window {
+    YT?: YouTubeApi;
+    onYouTubeIframeAPIReady?: () => void;
+    sociabuzzYouTubeApiPromise?: Promise<YouTubeApi>;
+  }
+}
+
+function getSharePlayerUrl(shareUrl: string, autoplay: boolean): { url: string; videoId?: string } | null {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(shareUrl);
+  } catch {
+    return null;
+  }
+  if (parsedUrl.protocol !== 'https:') return null;
+  const host = parsedUrl.hostname.toLowerCase();
+  const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+
+  if (
+    host === 'youtu.be' ||
+    host === 'youtube.com' ||
+    host.endsWith('.youtube.com') ||
+    host === 'youtube-nocookie.com' ||
+    host.endsWith('.youtube-nocookie.com')
+  ) {
+    const pathVideoId = ['shorts', 'embed', 'live'].includes(pathParts[0])
+      ? pathParts[1]
+      : host === 'youtu.be' ? pathParts[0] : '';
+    const videoId = parsedUrl.searchParams.get('v') || pathVideoId || '';
+    if (!/^[\w-]{11}$/.test(videoId)) return null;
+    return { url: 'https://www.youtube.com/embed/' + videoId, videoId };
+  }
+
+  if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
+    const videoIndex = pathParts.indexOf('video');
+    const videoId = videoIndex >= 0 ? pathParts[videoIndex + 1] || '' : '';
+    if (!/^\d+$/.test(videoId)) return null;
+    const params = new URLSearchParams({
+      autoplay: autoplay ? '1' : '0',
+      muted: '1',
+      loop: '1',
+      controls: '1',
+    });
+    return { url: `https://www.tiktok.com/player/v1/${videoId}?${params}` };
+  }
+
+  if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+    const mediaIndex = pathParts.findIndex(part => ['reel', 'p', 'tv'].includes(part));
+    if (mediaIndex < 0 || !pathParts[mediaIndex + 1]) return null;
+    return {
+      url: `https://www.instagram.com/${pathParts[mediaIndex]}/${encodeURIComponent(pathParts[mediaIndex + 1])}/embed/`,
+    };
+  }
+  return null;
+}
+
+function loadSociaBuzzYouTubeApi(): Promise<YouTubeApi> {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (window.sociabuzzYouTubeApiPromise) return window.sociabuzzYouTubeApiPromise;
+
+  window.sociabuzzYouTubeApiPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://www.youtube.com/iframe_api';
+    script.async = true;
+    window.onYouTubeIframeAPIReady = () => {
+      if (window.YT?.Player) resolve(window.YT);
+      else reject(new Error('YouTube IFrame API did not initialize.'));
+    };
+    script.addEventListener('error', () => {
+      window.sociabuzzYouTubeApiPromise = undefined;
+      reject(new Error('Could not load YouTube IFrame API.'));
+    }, { once: true });
+    document.head.appendChild(script);
+  });
+  return window.sociabuzzYouTubeApiPromise;
+}
+
+function SociaBuzzSharePlayer({
+  overlay,
+  onStarted,
+  onEnded,
+}: {
+  overlay: SharePlayerOverlay;
+  onStarted: () => void;
+  onEnded: () => void;
+}) {
+  const playerHostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const autoplayRef = useRef(overlay.autoplay);
+  const playerInfo = getSharePlayerUrl(overlay.shareUrl, overlay.autoplay);
+
+  useEffect(() => {
+    if (!playerInfo?.videoId || !playerHostRef.current) return;
+    let active = true;
+    void loadSociaBuzzYouTubeApi().then(YT => {
+      if (!active || !playerHostRef.current) return;
+      playerRef.current = new YT.Player(playerHostRef.current, {
+        videoId: playerInfo.videoId!,
+        playerVars: {
+          autoplay: 0,
+          controls: 1,
+          enablejsapi: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+          widget_referrer: window.location.origin,
+        },
+        events: {
+          onReady: event => {
+            event.target.mute();
+            if (autoplayRef.current) event.target.loadVideoById({ videoId: playerInfo.videoId! });
+            else event.target.cueVideoById({ videoId: playerInfo.videoId! });
+          },
+          onStateChange: event => {
+            if (event.data === 1) onStarted();
+            if (event.data === 0) onEnded();
+          },
+          onError: () => console.error('[SociaBuzz] YouTube rejected the shared-video embed.'),
+        },
+      });
+    }).catch(error => {
+      console.error('[SociaBuzz] YouTube player initialization failed:', error);
+    });
+    return () => {
+      active = false;
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [overlay.shareUrl, playerInfo?.videoId, onEnded, onStarted]);
+
+  useEffect(() => {
+    autoplayRef.current = overlay.autoplay;
+    if (overlay.autoplay && playerRef.current) {
+      playerRef.current.mute();
+      playerRef.current.loadVideoById({ videoId: playerInfo?.videoId ?? '' });
+    }
+  }, [overlay.autoplay, playerInfo?.videoId]);
+
+  const rect = overlay.rect;
+  const style = {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    backgroundImage: playerInfo?.videoId && !overlay.autoplay
+      ? `url("https://i.ytimg.com/vi/${playerInfo.videoId}/hqdefault.jpg")`
+      : 'none',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: 'contain',
+  };
+
+  if (playerInfo?.videoId) {
+    return (
+      <div className="fixed z-30 overflow-hidden rounded-xl bg-black" style={style}>
+        <div
+          ref={playerHostRef}
+          className={`absolute inset-0 ${overlay.autoplay ? 'opacity-100' : 'opacity-0'}`}
+        />
+      </div>
+    );
+  }
+
+  if (!playerInfo) return null;
+  return (
+    <iframe
+      title="Media yang dibagikan"
+      src={playerInfo.url}
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      referrerPolicy="strict-origin-when-cross-origin"
+      className="fixed z-30 overflow-hidden rounded-xl border-0 bg-black"
+      style={style}
+      onLoad={() => {
+        if (overlay.autoplay) onStarted();
+      }}
+    />
+  );
+}
+
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
 const DEFAULT_CSS = `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;900&family=Rajdhani:wght@600;700&display=swap');
@@ -108,6 +317,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
       const host = url.hostname.toLowerCase();
       return url.protocol === 'https:' && (
         host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com') ||
+        host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com') ||
         host === 'tiktok.com' || host.endsWith('.tiktok.com') ||
         host === 'instagram.com' || host.endsWith('.instagram.com')
       );
@@ -120,236 +330,40 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     const data = window.sociabuzz || {};
     if (isSocialUrl(data.shareUrl)) return data.shareUrl;
     const text = typeof data.message === 'string' ? data.message : '';
-    return text.split(' ').map(value => value.trim())
-      .map(value => value.replace(/[.,!?;:]+$/, ''))
-      .find(value => value.startsWith('https://') && isSocialUrl(value)) || '';
+    return text.match(/https:\/\/[^\s<>"')\]]+/gi)?.find(isSocialUrl) || '';
   };
 
-  const createEmbedUrl = (shareUrl, autoplay = false) => {
-    const url = new URL(shareUrl);
-    const host = url.hostname.toLowerCase();
-    const pathParts = url.pathname.split('/').filter(Boolean);
-    if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) {
-      const pathVideoId = ['shorts', 'embed', 'live'].includes(pathParts[0])
-        ? pathParts[1]
-        : host === 'youtu.be' ? pathParts[0] : '';
-      const videoId = url.searchParams.get('v') || pathVideoId || '';
-      if (!videoId) return '';
-      const appOrigin = window.sociabuzz?.appOrigin || '';
-      const playerParams = new URLSearchParams({
-        autoplay: autoplay ? '1' : '0',
-        mute: '1',
-        playsinline: '1',
-        enablejsapi: '1',
-      });
-      if (appOrigin) {
-        playerParams.set('origin', appOrigin);
-        playerParams.set('widget_referrer', appOrigin);
-      }
-      return 'https://www.youtube.com/embed/' + encodeURIComponent(videoId) + '?' + playerParams.toString();
-    }
-    if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
-      const videoIndex = pathParts.indexOf('video');
-      const videoId = videoIndex >= 0 ? pathParts[videoIndex + 1] || '' : '';
-      return videoId
-        ? 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?autoplay=' + (autoplay ? '1' : '0') + '&muted=1&loop=1&controls=1'
-        : '';
-    }
-    if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
-      const mediaTypeIndex = pathParts.findIndex(part => ['reel', 'p', 'tv'].includes(part));
-      const mediaType = mediaTypeIndex >= 0 ? pathParts[mediaTypeIndex] : '';
-      const shortcode = mediaTypeIndex >= 0 ? pathParts[mediaTypeIndex + 1] : '';
-      return mediaType && shortcode
-        ? 'https://www.instagram.com/' + mediaType + '/' + encodeURIComponent(shortcode) + '/embed/'
-        : '';
-    }
-    return '';
-  };
-
-  const loadYouTubeApi = () => {
-    if (window.YT?.Player) return Promise.resolve(window.YT);
-    if (window.sociabuzzYouTubeApiPromise) return window.sociabuzzYouTubeApiPromise;
-    window.sociabuzzYouTubeApiPromise = new Promise((resolve, reject) => {
-      const previousReady = window.onYouTubeIframeAPIReady;
-      const script = document.createElement('script');
-      script.src = 'https://www.youtube.com/iframe_api';
-      script.async = true;
-      window.onYouTubeIframeAPIReady = () => {
-        if (typeof previousReady === 'function') previousReady();
-        if (window.YT?.Player) resolve(window.YT);
-        else reject(new Error('YouTube IFrame API did not initialize.'));
-      };
-      script.addEventListener('error', () => reject(new Error('Could not load YouTube IFrame API.')), { once: true });
-      document.head.appendChild(script);
-    });
-    return window.sociabuzzYouTubeApiPromise;
-  };
-
-  let preparedSharePlayer = null;
-  let sharePlaybackRequested = false;
-  const showSharePlayer = (startPlayback = false) => {
+  const requestPlayer = action => {
+    const data = window.sociabuzz || {};
     const shareUrl = getShareUrl();
-    const options = window.sociabuzz?.overlayOptions || {};
+    const options = data.overlayOptions || {};
     if (!shareUrl || !options.mediashareActive ||
-        (window.sociabuzz?.isNsfw === true && !options.mediashareNSFW)) return;
+        (data.isNsfw === true && !options.mediashareNSFW)) return;
 
-    if (preparedSharePlayer?.shareUrl === shareUrl) {
-      if (startPlayback) {
-        sharePlaybackRequested = true;
-        if (preparedSharePlayer.play) preparedSharePlayer.play();
-      }
-      return;
-    }
+    const container = document.querySelector('.custom-media, .custom-video');
+    if (!container) return;
 
-    let container = document.querySelector('.custom-media');
-    if (!container) {
-      const media = document.querySelector('.custom-video');
-      container = document.createElement('div');
-      container.className = 'custom-media';
-      if (media) media.replaceWith(container);
-      else {
-        const card = document.querySelector('.cyber-card');
-        if (card) card.before(container);
-        else document.body.prepend(container);
-      }
-    }
-
-    container.replaceChildren();
-    container.style.backgroundImage = 'none';
-    container.style.animation = 'none';
-    container.style.width = 'min(100%, 480px)';
-    container.style.height = '270px';
-    container.style.aspectRatio = '16 / 9';
-
-    const playerUrl = createEmbedUrl(shareUrl, startPlayback);
-    const link = document.createElement('a');
-    link.href = shareUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = 'Buka media yang dibagikan';
-    link.style.cssText = 'display:block;margin-top:6px;color:#fff;text-align:center;text-decoration:underline;font:12px sans-serif';
-
-    if (!playerUrl) {
-      container.appendChild(link);
-      return;
-    }
-
-    const isYouTubePlayer = new URL(playerUrl).hostname === 'www.youtube.com';
-    const videoId = isYouTubePlayer ? new URL(playerUrl).pathname.split('/').filter(Boolean).pop() : '';
-    const frame = document.createElement('iframe');
-    frame.src = playerUrl;
-    frame.dataset.sociabuzzSharePlayer = 'true';
-    frame.title = 'Media yang dibagikan';
-    frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-    frame.referrerPolicy = 'strict-origin-when-cross-origin';
-    frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;background:transparent';
-    preparedSharePlayer = { shareUrl, frame, play: null };
-    sharePlaybackRequested = startPlayback;
-    let tiktokPlayerReady = false;
-    const playTikTokPlayer = () => {
-      if (!tiktokPlayerReady) return;
-      frame.contentWindow?.postMessage(
-        { type: 'play', value: '', 'x-tiktok-player': true },
-        'https://www.tiktok.com'
-      );
-      window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
-    };
-    const handlePlayerMessage = event => {
-      if (event.source === frame.contentWindow && event.origin === 'https://www.tiktok.com' &&
-          event.data?.['x-tiktok-player'] === true) {
-        if (event.data.type === 'onPlayerReady') {
-          tiktokPlayerReady = true;
-          if (sharePlaybackRequested) playTikTokPlayer();
-        } else if (event.data.type === 'onPlayerError') {
-          link.textContent = 'Video tidak bisa diputar di embed — buka media';
-          container.replaceChildren(link);
-        }
-      }
-    };
-    if (!isYouTubePlayer) {
-      activePlayerMessageHandler = handlePlayerMessage;
-      window.addEventListener('message', handlePlayerMessage);
-      if (new URL(playerUrl).hostname === 'www.tiktok.com') {
-        preparedSharePlayer.play = playTikTokPlayer;
-      }
-    }
-    frame.addEventListener('load', () => {
-      if (!isYouTubePlayer && new URL(playerUrl).hostname !== 'www.instagram.com') {
-        window.setTimeout(() => {
-          const status = container.querySelector('[data-sociabuzz-player-status]');
-          if (status) status.remove();
-        }, 1000);
-      }
-    }, { once: true });
-    frame.addEventListener('error', () => {
-      if (!isYouTubePlayer) window.removeEventListener('message', handlePlayerMessage);
-      link.textContent = 'Player dibatasi platform — buka media';
-      container.replaceChildren(link);
-    }, { once: true });
-    const status = document.createElement('span');
-    status.dataset.sociabuzzPlayerStatus = 'true';
-    status.textContent = 'Memuat video yang dibagikan...';
-    status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
-    container.style.position = 'relative';
-    container.append(frame, status, link);
-    if (isYouTubePlayer) {
-      void loadYouTubeApi().then(YT => {
-        if (!frame.isConnected) return;
-        const player = new YT.Player(frame, {
-          events: {
-            onReady: event => {
-              event.target.mute();
-              if (sharePlaybackRequested) {
-                event.target.loadVideoById({ videoId, startSeconds: 0 });
-              } else {
-                event.target.cueVideoById({ videoId, startSeconds: 0 });
-              }
-            },
-            onStateChange: event => {
-              if (event.data !== 1) return;
-              status.remove();
-              window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
-            },
-            onError: () => {
-              status.textContent = 'Video tidak dapat diputar — gunakan tautan di bawah';
-            },
-          },
-        });
-        preparedSharePlayer.play = () => {
-          player.mute();
-          player.loadVideoById({ videoId, startSeconds: 0 });
-        };
-      }).catch(error => {
-        console.error('[SociaBuzz] YouTube player could not be initialized:', error);
-        window.sociabuzzYouTubeApiPromise = null;
-        status.textContent = 'Player tidak tersedia — klik tautan untuk membuka video';
-      });
-    } else if (new URL(playerUrl).hostname === 'www.instagram.com') {
-      status.textContent = 'Buka media untuk memutar video Instagram';
-      link.textContent = 'Putar media Instagram';
-      window.parent.postMessage({ type: 'sociabuzz:media-started' }, '*');
-    }
+    const rect = container.getBoundingClientRect();
+    window.parent.postMessage({
+      type: 'sociabuzz:share-player',
+      action,
+      shareUrl,
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    }, '*');
   };
 
-  let activePlayerMessageHandler = null;
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
-    if (event.data?.type === 'sociabuzz:tts-finished') {
-      showSharePlayer(true);
-    } else if (event.data?.type === 'sociabuzz:alert-hide') {
-      if (activePlayerMessageHandler) {
-        window.removeEventListener('message', activePlayerMessageHandler);
-        activePlayerMessageHandler = null;
-      }
-      preparedSharePlayer = null;
-      sharePlaybackRequested = false;
-      document.querySelector('.custom-media')?.replaceChildren();
+    if (event.data?.type === 'sociabuzz:tts-finished') requestPlayer('play');
+    if (event.data?.type === 'sociabuzz:alert-hide') {
+      window.parent.postMessage({ type: 'sociabuzz:share-player-hide' }, '*');
     }
   });
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => showSharePlayer(false), { once: true });
+    document.addEventListener('DOMContentLoaded', () => requestPlayer('prepare'), { once: true });
   } else {
-    showSharePlayer(false);
+    requestPlayer('prepare');
   }
 })();`;
 
@@ -609,6 +623,7 @@ export default function SociabuzzPage() {
   });
   const [alert, setAlert] = useState<AlertData | null>(null);
   const [visible, setVisible] = useState(false);
+  const [sharePlayerOverlay, setSharePlayerOverlay] = useState<SharePlayerOverlay | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webhookToken, setWebhookToken] = useState('');
@@ -632,6 +647,8 @@ export default function SociabuzzPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const alertFrameRef = useRef<HTMLIFrameElement>(null);
+  const sharePlaybackStartedRef = useRef<(() => void) | null>(null);
+  const sharePlaybackEndedRef = useRef<(() => void) | null>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
   const configRef = useRef(config);
   const audioUnlockedRef = useRef(false);
@@ -658,6 +675,53 @@ export default function SociabuzzPage() {
   useEffect(() => {
     configRef.current = config;
   }, [config]);
+
+  const notifyShareMediaStarted = useCallback(() => {
+    sharePlaybackStartedRef.current?.();
+  }, []);
+  const notifyShareMediaEnded = useCallback(() => {
+    sharePlaybackEndedRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    const handleSharePlayerRequest = (event: MessageEvent) => {
+      if (event.source !== alertFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
+      const { type } = event.data;
+      if (type === 'sociabuzz:share-player-hide') {
+        setSharePlayerOverlay(null);
+        return;
+      }
+      if (type !== 'sociabuzz:share-player' || typeof event.data.shareUrl !== 'string') return;
+      const options = readSociaBuzzOverlayOptions();
+      if (!options.mediashareActive || (alert?.isNsfw === true && !options.mediashareNSFW)) return;
+      if (!getSharePlayerUrl(event.data.shareUrl, false)) return;
+      const rect = event.data.rect;
+      if (!rect || !['left', 'top', 'width', 'height'].every(key =>
+        typeof rect[key] === 'number' && Number.isFinite(rect[key])
+      ) || rect.width <= 0 || rect.height <= 0) return;
+
+      const alertFrame = alertFrameRef.current;
+      if (!alertFrame) return;
+      const frameRect = alertFrame.getBoundingClientRect();
+      const scaleX = frameRect.width / (alertFrame.clientWidth || window.innerWidth);
+      const scaleY = frameRect.height / (alertFrame.clientHeight || window.innerHeight);
+      const left = Math.max(0, frameRect.left + rect.left * scaleX);
+      const top = Math.max(0, frameRect.top + rect.top * scaleY);
+      const width = Math.min(rect.width * scaleX, window.innerWidth - left);
+      const height = Math.min(rect.height * scaleY, window.innerHeight - top);
+      if (width <= 0 || height <= 0) return;
+
+      setSharePlayerOverlay(previous => ({
+        shareUrl: event.data.shareUrl,
+        rect: { left, top, width, height },
+        autoplay: event.data.action === 'play' || (
+          previous !== null && previous.shareUrl === event.data.shareUrl && previous.autoplay
+        ),
+      }));
+    };
+    window.addEventListener('message', handleSharePlayerRequest);
+    return () => window.removeEventListener('message', handleSharePlayerRequest);
+  }, [alert?.isNsfw]);
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) audioContextRef.current = new AudioContext();
@@ -910,6 +974,7 @@ export default function SociabuzzPage() {
       : Promise.resolve(null);
     let soundFailed = false;
 
+    setSharePlayerOverlay(null);
     setAlert(nextAlert);
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -1004,7 +1069,8 @@ export default function SociabuzzPage() {
             settled = true;
             if (timers.duration !== undefined) window.clearTimeout(timers.duration);
             if (timers.startup !== undefined) window.clearTimeout(timers.startup);
-            window.removeEventListener('message', handleMediaStarted);
+            if (sharePlaybackStartedRef.current === beginPlaybackWindow) sharePlaybackStartedRef.current = null;
+            if (sharePlaybackEndedRef.current === finish) sharePlaybackEndedRef.current = null;
             resolve();
           };
           const beginPlaybackWindow = () => {
@@ -1012,12 +1078,8 @@ export default function SociabuzzPage() {
             if (timers.startup !== undefined) window.clearTimeout(timers.startup);
             timers.duration = window.setTimeout(finish, playbackDurationMs);
           };
-          const handleMediaStarted = (event: MessageEvent) => {
-            if (event.source !== alertFrameRef.current?.contentWindow ||
-                event.data?.type !== 'sociabuzz:media-started') return;
-            beginPlaybackWindow();
-          };
-          window.addEventListener('message', handleMediaStarted);
+          sharePlaybackStartedRef.current = beginPlaybackWindow;
+          sharePlaybackEndedRef.current = finish;
           timers.startup = window.setTimeout(finish, 20000);
           alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
         });
@@ -1032,6 +1094,7 @@ export default function SociabuzzPage() {
         alertTimerRef.current = null;
       }
       alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:alert-hide' }, '*');
+      setSharePlayerOverlay(null);
       setVisible(false);
       if (audioRef.current) {
         audioRef.current.pause();
@@ -1342,6 +1405,13 @@ export default function SociabuzzPage() {
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           srcDoc={previewHtml}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        />
+      )}
+      {sharePlayerOverlay && visible && (
+        <SociaBuzzSharePlayer
+          overlay={sharePlayerOverlay}
+          onStarted={notifyShareMediaStarted}
+          onEnded={notifyShareMediaEnded}
         />
       )}
       {isAdmin && (
