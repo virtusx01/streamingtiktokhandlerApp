@@ -132,7 +132,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
         : host === 'youtu.be' ? pathParts[0] : '';
       const videoId = url.searchParams.get('v') || pathVideoId || '';
       return videoId
-        ? 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(videoId) + '?autoplay=1&mute=1&playsinline=1'
+        ? 'https://www.youtube.com/embed/' + encodeURIComponent(videoId) + '?autoplay=1&mute=1&playsinline=1&enablejsapi=1'
         : '';
     }
     if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
@@ -151,6 +151,25 @@ const SHARE_MEDIA_BRIDGE = `(() => {
         : '';
     }
     return '';
+  };
+
+  const loadYouTubeApi = () => {
+    if (window.YT?.Player) return Promise.resolve(window.YT);
+    if (window.sociabuzzYouTubeApiPromise) return window.sociabuzzYouTubeApiPromise;
+    window.sociabuzzYouTubeApiPromise = new Promise((resolve, reject) => {
+      const previousReady = window.onYouTubeIframeAPIReady;
+      const script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      window.onYouTubeIframeAPIReady = () => {
+        if (typeof previousReady === 'function') previousReady();
+        if (window.YT?.Player) resolve(window.YT);
+        else reject(new Error('YouTube IFrame API did not initialize.'));
+      };
+      script.addEventListener('error', () => reject(new Error('Could not load YouTube IFrame API.')), { once: true });
+      document.head.appendChild(script);
+    });
+    return window.sociabuzzYouTubeApiPromise;
   };
 
   const showSharePlayer = () => {
@@ -199,26 +218,13 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;background:transparent';
-    frame.addEventListener('load', () => {
-      window.setTimeout(() => {
-        const status = container.querySelector('[data-sociabuzz-player-status]');
-        if (status) status.remove();
-      }, 1000);
-    }, { once: true });
-    frame.addEventListener('error', () => {
-      link.textContent = 'Player dibatasi platform — buka media';
-      container.replaceChildren(link);
-    }, { once: true });
-    const status = document.createElement('span');
-    status.dataset.sociabuzzPlayerStatus = 'true';
-    status.textContent = 'Memuat video yang dibagikan...';
-    status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
-    container.style.position = 'relative';
-    container.append(frame, status, link);
-    if (new URL(playerUrl).hostname === 'www.tiktok.com') {
-      window.addEventListener('message', event => {
-        if (event.source !== frame.contentWindow || event.origin !== 'https://www.tiktok.com' ||
-            event.data?.['x-tiktok-player'] !== true) return;
+    const isYouTubePlayer = new URL(playerUrl).hostname === 'www.youtube.com';
+    let playerReady = false;
+    let userRequestedPlayback = false;
+    let youTubePlayer = null;
+    const handlePlayerMessage = event => {
+      if (event.source === frame.contentWindow && event.origin === 'https://www.tiktok.com' &&
+          event.data?.['x-tiktok-player'] === true) {
         if (event.data.type === 'onPlayerReady') {
           frame.contentWindow?.postMessage(
             { type: 'play', value: '', 'x-tiktok-player': true },
@@ -228,16 +234,90 @@ const SHARE_MEDIA_BRIDGE = `(() => {
           link.textContent = 'Video tidak bisa diputar di embed — buka media';
           container.replaceChildren(link);
         }
+      }
+    };
+    if (!isYouTubePlayer) {
+      activePlayerMessageHandler = handlePlayerMessage;
+      window.addEventListener('message', handlePlayerMessage);
+    }
+    frame.addEventListener('load', () => {
+      if (!isYouTubePlayer) {
+        window.setTimeout(() => {
+          const status = container.querySelector('[data-sociabuzz-player-status]');
+          if (status) status.remove();
+        }, 1000);
+      }
+    }, { once: true });
+    frame.addEventListener('error', () => {
+      if (!isYouTubePlayer) window.removeEventListener('message', handlePlayerMessage);
+      link.textContent = 'Player dibatasi platform — buka media';
+      container.replaceChildren(link);
+    }, { once: true });
+    const status = document.createElement('span');
+    status.dataset.sociabuzzPlayerStatus = 'true';
+    status.textContent = 'Memuat video yang dibagikan...';
+    status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
+    container.style.position = 'relative';
+    container.append(frame, status, link);
+    if (isYouTubePlayer) {
+      const videoId = new URL(playerUrl).pathname.split('/').filter(Boolean).pop();
+      const poster = document.createElement('button');
+      poster.type = 'button';
+      poster.dataset.sociabuzzVideoPoster = 'true';
+      poster.setAttribute('aria-label', 'Putar video YouTube');
+      poster.style.cssText = 'position:absolute;inset:0;z-index:2;width:100%;height:100%;padding:0;border:0;border-radius:12px;background:#111;cursor:pointer;overflow:hidden';
+      const thumbnail = document.createElement('img');
+      thumbnail.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId || '') + '/hqdefault.jpg';
+      thumbnail.alt = '';
+      thumbnail.style.cssText = 'width:100%;height:100%;object-fit:cover';
+      thumbnail.addEventListener('error', () => thumbnail.remove(), { once: true });
+      const playIcon = document.createElement('span');
+      playIcon.textContent = '▶';
+      playIcon.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:48px;border-radius:14px;background:#f03;color:white;font:32px/48px sans-serif;text-align:center;box-shadow:0 2px 8px #0008';
+      poster.append(thumbnail, playIcon);
+      poster.addEventListener('click', () => {
+        userRequestedPlayback = true;
+        if (playerReady) youTubePlayer?.playVideo();
+      }, { once: true });
+      container.appendChild(poster);
+      void loadYouTubeApi().then(YT => {
+        if (!frame.isConnected) return;
+        youTubePlayer = new YT.Player(frame, {
+          events: {
+            onReady: event => {
+              playerReady = true;
+              event.target.mute();
+              if (userRequestedPlayback || frame.src.includes('autoplay=1')) event.target.playVideo();
+            },
+            onStateChange: event => {
+              if (event.data !== 1) return;
+              poster.remove();
+              status.remove();
+            },
+            onError: () => {
+              status.textContent = 'Video tidak dapat diputar — gunakan tautan di bawah';
+            },
+          },
+        });
+      }).catch(error => {
+        console.error('[SociaBuzz] YouTube player could not be initialized:', error);
+        status.textContent = 'Player tidak tersedia — klik tautan untuk membuka video';
       });
     }
   };
 
+  let activePlayerMessageHandler = null;
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
     if (event.data?.type === 'sociabuzz:tts-finished') {
       showSharePlayer();
     } else if (event.data?.type === 'sociabuzz:alert-hide') {
-      document.querySelector('[data-sociabuzz-share-player]')?.remove();
+      if (activePlayerMessageHandler) {
+        window.removeEventListener('message', activePlayerMessageHandler);
+        activePlayerMessageHandler = null;
+      }
+      window.sociabuzzYouTubeApiPromise = null;
+      document.querySelector('.custom-media')?.replaceChildren();
     }
   });
 })();`;
@@ -375,7 +455,7 @@ function createDocument(
     ${fontFamily ? `html,body,.cyber-alert,.cyber-card,.cyber-header,.badge,.action,.user,.cyber-msg{font-family:'${fontFamily}',sans-serif!important;font-weight:${fontWeight}!important}` : ''}
   </style>`;
   return `<!doctype html><html><head><meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline' https://www.youtube.com; connect-src https://www.youtube.com https://youtube.com https://*.youtube.com https://youtubei.googleapis.com https://*.googlevideo.com https://*.ytimg.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://www.instagram.com https://*.instagram.com https://*.cdninstagram.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
     ${fontLink}<style>${safeCss}</style>${themeStyle}</head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
@@ -1135,8 +1215,8 @@ export default function SociabuzzPage() {
         <iframe
           ref={alertFrameRef}
           title="SociaBuzz alert"
-          sandbox="allow-scripts"
-          allow="autoplay"
+          sandbox="allow-scripts allow-presentation"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           srcDoc={previewHtml}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />

@@ -24,7 +24,10 @@ the alert replaces `.custom-media` with the platform's official embedded player
 after TTS finishes. YouTube and TikTok autoplay muted to comply with browser
 autoplay restrictions. Platform privacy settings, embed permissions, or browser
 policies can still prevent playback; the original post link remains available
-in the alert as a fallback.
+as a fallback. YouTube embeds use the standard player URL, preserve the browser
+referrer required by YouTube, and show the video's official thumbnail with a
+play control until playback is confirmed. This avoids a blank/black alert when
+autoplay is blocked or the embed is unavailable.
 
 The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
 opacity, font, embed, and share-alert TTS. For example:
