@@ -29,6 +29,18 @@ function isValidAlertJavascript(javascript: unknown): javascript is string {
   return typeof javascript === 'string' && javascript.length <= 15000;
 }
 
+function isValidDefaultMediaUrl(value: unknown): value is string {
+  if (value === '') return true;
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' &&
+      /\.(?:avif|gif|jpe?g|m4v|mov|mp4|png|webm|webp)$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function GET() {
   const config = getSetting(CONFIG_KEY, {});
   const safeConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
@@ -48,6 +60,7 @@ export async function GET() {
       : 8000,
     useCustomSound: safeConfig.useCustomSound === true,
     customSoundUrl,
+    defaultMediaUrl: isValidDefaultMediaUrl(safeConfig.defaultMediaUrl) ? safeConfig.defaultMediaUrl : '',
     ttsVoice: typeof safeConfig.ttsVoice === 'string' && safeConfig.ttsVoice.length <= 300
       ? safeConfig.ttsVoice
       : DEFAULT_TTS_VOICE,
@@ -84,6 +97,7 @@ export async function POST(req: Request) {
       durationMs,
       useCustomSound = false,
       customSoundUrl = '',
+      defaultMediaUrl = '',
       ttsVoice = DEFAULT_TTS_VOICE,
       ttsRate = 1,
       ttsPitch = 1,
@@ -120,6 +134,9 @@ export async function POST(req: Request) {
     if (useCustomSound && !customSoundUrl) {
       return NextResponse.json({ error: 'Pilih file suara custom sebelum mengaktifkannya.' }, { status: 400 });
     }
+    if (!isValidDefaultMediaUrl(defaultMediaUrl)) {
+      return NextResponse.json({ error: 'URL media default harus berupa URL HTTPS langsung ke file gambar atau video, seperti WebM.' }, { status: 400 });
+    }
     if (
       typeof ttsVoice !== 'string' ||
       ttsVoice.length > 300 ||
@@ -138,7 +155,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Webhook token harus berisi 16 sampai 256 karakter.' }, { status: 400 });
     }
 
-    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs, useCustomSound, customSoundUrl, ttsVoice, ttsRate, ttsPitch });
+    setSetting(CONFIG_KEY, { mode, html, css, javascript, durationMs, useCustomSound, customSoundUrl, defaultMediaUrl, ttsVoice, ttsRate, ttsPitch });
     if (typeof webhookToken === 'string' && webhookToken.length > 0) {
       setSetting(TOKEN_KEY, webhookToken);
       setSetting(TOKEN_HASH_KEY, '');

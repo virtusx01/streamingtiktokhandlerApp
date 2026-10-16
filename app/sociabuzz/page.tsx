@@ -13,6 +13,7 @@ type AlertConfig = {
   durationMs: number;
   useCustomSound: boolean;
   customSoundUrl: string;
+  defaultMediaUrl: string;
   ttsVoice: string;
   ttsRate: number;
   ttsPitch: number;
@@ -540,7 +541,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     const data = window.sociabuzz || {};
     const shareUrl = getShareUrl();
     const options = data.overlayOptions || {};
-    if (!options.mediashareActive || (data.isNsfw === true && !options.mediashareNSFW)) return;
+    const mediaShareAllowed = options.mediashareActive && !(data.isNsfw === true && !options.mediashareNSFW);
 
     const alert = document.querySelector('.cyber-alert');
     let container = document.querySelector('.custom-media, .custom-video');
@@ -550,6 +551,43 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     }
     if (alert) alert.insertBefore(container, alert.firstElementChild);
     else if (!container.isConnected) document.body.prepend(container);
+    Object.assign(container.style, {
+      order: '-1',
+      boxSizing: 'border-box',
+      width: 'min(320px, 90vw)',
+      height: 'auto',
+      aspectRatio: '16 / 9',
+      flex: '0 0 auto',
+      margin: '0 auto 12px',
+      display: 'block',
+      position: 'relative',
+      overflow: 'hidden',
+    });
+    if (!shareUrl && !data.mediaUrl && typeof data.defaultMediaUrl === 'string' && data.defaultMediaUrl) {
+      if (/\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(data.defaultMediaUrl) &&
+          container.tagName !== 'VIDEO' &&
+          !container.querySelector('video')) {
+        const fallbackVideo = document.createElement('video');
+        fallbackVideo.src = data.defaultMediaUrl;
+        fallbackVideo.autoplay = true;
+        fallbackVideo.muted = true;
+        fallbackVideo.loop = true;
+        fallbackVideo.playsInline = true;
+        Object.assign(fallbackVideo.style, {
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+        });
+        container.append(fallbackVideo);
+      } else if (!/\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(data.defaultMediaUrl)) {
+        container.style.backgroundImage = 'url("' + data.defaultMediaUrl + '")';
+        container.style.backgroundSize = 'contain';
+        container.style.backgroundRepeat = 'no-repeat';
+        container.style.backgroundPosition = 'center';
+      }
+    }
+
+    if (!mediaShareAllowed) return;
 
     const rect = container.getBoundingClientRect();
     const playerRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
@@ -712,9 +750,14 @@ function escapeHtml(value: string) {
   })[character] || character);
 }
 
-function renderHtml(template: string, alert: AlertData) {
-  const safeMediaUrl = escapeHtml(alert.mediaUrl);
-  const isVideo = /^https:\/\//i.test(alert.mediaUrl) && /\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(alert.mediaUrl);
+function renderHtml(template: string, alert: AlertData, defaultMediaUrl: string) {
+  const hasShareUrl = Boolean(
+    normalizeSupportedShareUrl(alert.shareUrl ?? '') ||
+    findSupportedShareUrl(alert.raw),
+  );
+  const mediaUrl = alert.mediaUrl || (!hasShareUrl ? defaultMediaUrl : '');
+  const safeMediaUrl = escapeHtml(mediaUrl);
+  const isVideo = /^https:\/\//i.test(mediaUrl) && /\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(mediaUrl);
   const mediaMarkup = isVideo
     ? `<video class="custom-video" src="${safeMediaUrl}" autoplay muted playsinline loop></video>`
     : `<div class="custom-media" style="background-image:url('${safeMediaUrl}');"></div>`;
@@ -732,6 +775,7 @@ function createDocument(
   javascript: string,
   alert: AlertData,
   soundUrl: string,
+  defaultMediaUrl: string,
   overlayOptions: SociaBuzzOverlayOptions,
 ) {
   const safeCss = css.replace(/<\/style/gi, '<\\/style');
@@ -753,6 +797,7 @@ function createDocument(
     soundUrl: alert.soundUrl ?? null,
     fromText: alert.fromText ?? 'mengirim',
     sound: soundUrl,
+    defaultMediaUrl,
     overlayOptions,
     payload: alert.raw?.payload ?? null,
   })
@@ -780,7 +825,7 @@ function createDocument(
       .cyber-alert{display:flex!important;flex-direction:column!important;align-items:center!important}
       .cyber-alert>.custom-media,.cyber-alert>.custom-video{order:-1!important;box-sizing:border-box!important;width:min(320px,90vw)!important;height:auto!important;aspect-ratio:16/9!important;flex:0 0 auto!important;margin:0 auto 12px!important;display:block!important;position:relative!important;overflow:hidden!important}
       .cyber-alert>.custom-media{background-size:contain!important;background-repeat:no-repeat!important;background-position:center!important}
-      .cyber-alert>.custom-media img,.cyber-alert>.custom-video{object-fit:contain!important}
+      .cyber-alert>.custom-video{object-fit:contain!important}
     </style></head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
@@ -836,6 +881,7 @@ export default function SociabuzzPage() {
     durationMs: 8000,
     useCustomSound: false,
     customSoundUrl: '',
+    defaultMediaUrl: '',
     ttsVoice: 'browser:default',
     ttsRate: 1,
     ttsPitch: 1,
@@ -1632,14 +1678,15 @@ export default function SociabuzzPage() {
         }
       : alert;
     return createDocument(
-      renderHtml(template, templateData),
+      renderHtml(template, templateData, config.defaultMediaUrl),
       css,
       javascript,
       alert,
       scriptHandlesSound ? selectedSoundUrl : '',
+      config.defaultMediaUrl,
       readSociaBuzzOverlayOptions(),
     );
-  }, [alert, config.css, config.html, config.javascript, config.mode, config.useCustomSound, config.customSoundUrl]);
+  }, [alert, config.css, config.defaultMediaUrl, config.html, config.javascript, config.mode, config.useCustomSound, config.customSoundUrl]);
 
   const copyDefaultToCustom = () => {
     setConfig((current) => ({
@@ -1745,6 +1792,7 @@ export default function SociabuzzPage() {
       const response = await fetch(`/api/sociabuzz/test${mediaShare ? '?mediaShare=1' : ''}`, { method: 'POST' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Gagal mengirim test alert.');
+      setSettingsOpen(false);
     } catch (testAlertError) {
       console.error('[SociaBuzz] Test alert failed:', testAlertError);
       setTestError(testAlertError instanceof Error ? testAlertError.message : 'Gagal mengirim test alert.');
@@ -1783,23 +1831,6 @@ export default function SociabuzzPage() {
       )}
       {isAdmin && (
         <>
-          <button
-            type="button"
-            onClick={() => void testAlert(false)}
-            disabled={testingAlert !== null}
-            className="fixed bottom-5 left-5 rounded-lg border border-white/15 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur hover:bg-slate-800 disabled:opacity-60"
-          >
-            {testingAlert === 'regular' ? 'Mengirim...' : 'Test Alert Biasa'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void testAlert(true)}
-            disabled={testingAlert !== null}
-            className="fixed bottom-5 left-32 rounded-lg border border-violet-300/30 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-violet-100 shadow-lg backdrop-blur hover:bg-violet-950 disabled:opacity-60"
-          >
-            {testingAlert === 'mediaShare' ? 'Mengirim...' : 'Test MediaShare'}
-          </button>
-          {testError && <p role="alert" className="fixed bottom-16 left-5 max-w-xs rounded-lg bg-red-950/90 px-3 py-2 text-xs text-red-200">{testError}</p>}
           <button
             type="button"
             aria-label="Pengaturan SociaBuzz"
@@ -1873,6 +1904,30 @@ export default function SociabuzzPage() {
                   ))}
                 </div>
               </div>
+
+              <section className="rounded-xl border border-violet-400/25 bg-violet-950/20 p-4">
+                <h2 className="text-sm font-semibold">Tes alert langsung</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-400">Pilih jenis tes. Pengaturan akan tertutup setelah tes dikirim supaya alert terlihat langsung di halaman /sociabuzz.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void testAlert(false)}
+                    disabled={testingAlert !== null}
+                    className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {testingAlert === 'regular' ? 'Mengirim...' : 'Test Alert Biasa'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void testAlert(true)}
+                    disabled={testingAlert !== null}
+                    className="rounded-lg border border-violet-400/40 bg-violet-500/15 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-60"
+                  >
+                    {testingAlert === 'mediaShare' ? 'Mengirim...' : 'Test MediaShare'}
+                  </button>
+                </div>
+                {testError && <p role="alert" className="mt-3 text-xs text-red-300">{testError}</p>}
+              </section>
 
               {config.mode === 'custom' && (
                 <div className="space-y-4">
@@ -2099,6 +2154,45 @@ export default function SociabuzzPage() {
                 {ttsVoiceError && <p role="alert" className="mt-2 text-xs text-red-300">{ttsVoiceError}</p>}
                 {responsiveVoiceConfigured && responsiveVoices.length === 0 && !loadingTtsVoices && (
                   <p className="mt-2 text-xs text-amber-200">Katalog ResponsiveVoice kosong atau belum berhasil dimuat. Pilihan suara browser tetap tersedia.</p>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-cyan-400/20 bg-slate-900/70 p-4">
+                <label htmlFor="sociabuzz-default-media" className="mb-2 block text-sm font-semibold">Media default `.custom-media`</label>
+                <p className="mb-3 text-xs leading-5 text-slate-400">
+                  Ditampilkan di slot 16:9 bila alert tidak menerima URL MediaShare atau URL media. Gunakan URL publik HTTPS langsung ke file, misalnya WebM, MP4, atau gambar.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    id="sociabuzz-default-media"
+                    type="url"
+                    value={config.defaultMediaUrl}
+                    onChange={event => setConfig(current => ({ ...current, defaultMediaUrl: event.target.value }))}
+                    placeholder="https://cdn.example.com/default.webm"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                  />
+                  {config.defaultMediaUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setConfig(current => ({ ...current, defaultMediaUrl: '' }))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
+                {config.defaultMediaUrl && /\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(config.defaultMediaUrl) && (
+                  <div className="mt-3 aspect-video max-w-sm overflow-hidden rounded-lg bg-black">
+                    <video src={config.defaultMediaUrl} muted loop playsInline autoPlay className="h-full w-full object-contain" />
+                  </div>
+                )}
+                {config.defaultMediaUrl && !/\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(config.defaultMediaUrl) && (
+                  <div
+                    role="img"
+                    aria-label="Pratinjau media default"
+                    className="mt-3 aspect-video max-w-sm rounded-lg bg-black bg-contain bg-center bg-no-repeat"
+                    style={{ backgroundImage: `url("${config.defaultMediaUrl}")` }}
+                  />
                 )}
               </section>
 

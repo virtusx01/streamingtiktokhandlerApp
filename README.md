@@ -30,9 +30,14 @@ card and kept at a responsive 16:9 landscape ratio. Custom alert HTML without a
 rejects the embed, the overlay displays a link to open the original share URL.
 YouTube links using either the standard `v` query or SociaBuzz's `videoId`
 query are recognized.
-The **Test Alert** button sends a regular alert without shared media, while
-**Test MediaShare** uses a public YouTube share URL. The overlay keeps MediaShare
-alerts visible for the donation-funded playback time, then closes the player.
+The SociaBuzz settings panel contains **Test Alert Biasa** and **Test MediaShare**;
+the settings close after sending so each test is shown live by `/sociabuzz`.
+The regular test has no shared media, while MediaShare uses a public YouTube
+share URL. A public HTTPS image or video URL can be configured as the default
+`.custom-media` fallback; WebM, MP4, and common image formats are supported.
+It is shown in the 16:9 slot only when an alert has no shared/media URL.
+MediaShare alerts remain visible for the donation-funded playback time, then
+close the player.
 
 SociaBuzz MediaShare events arrive on the account's Ably realtime channel, not
 necessarily in the donation webhook. The overlay subscribes using the public
