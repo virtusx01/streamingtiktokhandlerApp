@@ -14,6 +14,10 @@ type AlertConfig = {
   useCustomSound: boolean;
   customSoundUrl: string;
   defaultMediaUrl: string;
+  customMediaWidth: number;
+  customMediaHeight: number;
+  mediaShareWidth: number;
+  mediaShareHeight: number;
   ttsVoice: string;
   ttsRate: number;
   ttsPitch: number;
@@ -379,6 +383,17 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
   };
 
   const getMediaSlot = () => document.querySelector('.custom-media');
+  const applyMediaSlotSize = (slot, mediaShare) => {
+    const data = window.sociabuzz || {};
+    const width = mediaShare ? data.mediaShareWidth : data.customMediaWidth;
+    const height = mediaShare ? data.mediaShareHeight : data.customMediaHeight;
+    if (Number.isInteger(width) && width >= 120 && width <= 1920) {
+      slot.style.setProperty('width', width + 'px', 'important');
+    }
+    if (Number.isInteger(height) && height >= 90 && height <= 1080) {
+      slot.style.setProperty('height', height + 'px', 'important');
+    }
+  };
 
   const setDefaultMedia = () => {
     const slot = getMediaSlot();
@@ -426,6 +441,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       notifyUnavailable();
       return;
     }
+    applyMediaSlotSize(slot, true);
     const rect = slot.getBoundingClientRect();
     window.parent.postMessage({
       type: action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
@@ -441,6 +457,8 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     const options = data.overlayOptions || {};
     const mediaShareAllowed = options.mediashareActive && !(data.isNsfw === true && !options.mediashareNSFW);
     if (!mediaShareAllowed || !shareUrl) {
+      const slot = getMediaSlot();
+      if (slot) applyMediaSlotSize(slot, false);
       setDefaultMedia();
       return;
     }
@@ -620,6 +638,10 @@ function createDocument(
   alert: AlertData,
   soundUrl: string,
   defaultMediaUrl: string,
+  customMediaWidth: number,
+  customMediaHeight: number,
+  mediaShareWidth: number,
+  mediaShareHeight: number,
   overlayOptions: SociaBuzzOverlayOptions,
 ) {
   const safeCss = css.replace(/<\/style/gi, '<\\/style');
@@ -641,6 +663,10 @@ function createDocument(
     fromText: alert.fromText ?? 'mengirim',
     sound: soundUrl,
     defaultMediaUrl,
+    customMediaWidth,
+    customMediaHeight,
+    mediaShareWidth,
+    mediaShareHeight,
     overlayOptions,
     payload: alert.raw?.payload ?? null,
   })
@@ -721,6 +747,10 @@ export default function SociabuzzPage() {
     useCustomSound: false,
     customSoundUrl: '',
     defaultMediaUrl: '',
+    customMediaWidth: 220,
+    customMediaHeight: 180,
+    mediaShareWidth: 560,
+    mediaShareHeight: 315,
     ttsVoice: 'browser:default',
     ttsRate: 1,
     ttsPitch: 1,
@@ -1484,9 +1514,26 @@ export default function SociabuzzPage() {
       alert,
       scriptHandlesSound ? selectedSoundUrl : '',
       config.defaultMediaUrl,
+      config.customMediaWidth,
+      config.customMediaHeight,
+      config.mediaShareWidth,
+      config.mediaShareHeight,
       readSociaBuzzOverlayOptions(),
     );
-  }, [alert, config.css, config.defaultMediaUrl, config.html, config.javascript, config.mode, config.useCustomSound, config.customSoundUrl]);
+  }, [
+    alert,
+    config.css,
+    config.customMediaHeight,
+    config.customMediaWidth,
+    config.defaultMediaUrl,
+    config.html,
+    config.javascript,
+    config.mediaShareHeight,
+    config.mediaShareWidth,
+    config.mode,
+    config.useCustomSound,
+    config.customSoundUrl,
+  ]);
 
   const copyDefaultToCustom = () => {
     setConfig((current) => ({
@@ -2020,6 +2067,76 @@ export default function SociabuzzPage() {
                     style={{ backgroundImage: `url("${config.defaultMediaUrl}")` }}
                   />
                 )}
+              </section>
+
+              <section className="rounded-xl border border-cyan-400/20 bg-slate-900/70 p-4">
+                <h2 className="text-sm font-semibold">Ukuran `.custom-media` — alert biasa</h2>
+                <p className="mb-3 mt-1 text-xs leading-5 text-slate-400">
+                  Berlaku untuk alert tanpa MediaShare. Ukuran ini mengatur lebar dan tinggi slot `.custom-media`.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label htmlFor="sociabuzz-custom-media-width" className="text-xs text-slate-300">
+                    Lebar (px)
+                    <input
+                      id="sociabuzz-custom-media-width"
+                      type="number"
+                      min={120}
+                      max={1920}
+                      step={1}
+                      value={config.customMediaWidth}
+                      onChange={event => setConfig(current => ({ ...current, customMediaWidth: Number(event.target.value) }))}
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                    />
+                  </label>
+                  <label htmlFor="sociabuzz-custom-media-height" className="text-xs text-slate-300">
+                    Tinggi (px)
+                    <input
+                      id="sociabuzz-custom-media-height"
+                      type="number"
+                      min={90}
+                      max={1080}
+                      step={1}
+                      value={config.customMediaHeight}
+                      onChange={event => setConfig(current => ({ ...current, customMediaHeight: Number(event.target.value) }))}
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-violet-400/20 bg-slate-900/70 p-4">
+                <h2 className="text-sm font-semibold">Ukuran `.custom-media` — MediaShare</h2>
+                <p className="mb-3 mt-1 text-xs leading-5 text-slate-400">
+                  Berlaku khusus saat MediaShare diterima. Player akan mengisi slot ini dan tetap berada di dalam batasnya.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label htmlFor="sociabuzz-media-share-width" className="text-xs text-slate-300">
+                    Lebar (px)
+                    <input
+                      id="sociabuzz-media-share-width"
+                      type="number"
+                      min={120}
+                      max={1920}
+                      step={1}
+                      value={config.mediaShareWidth}
+                      onChange={event => setConfig(current => ({ ...current, mediaShareWidth: Number(event.target.value) }))}
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
+                    />
+                  </label>
+                  <label htmlFor="sociabuzz-media-share-height" className="text-xs text-slate-300">
+                    Tinggi (px)
+                    <input
+                      id="sociabuzz-media-share-height"
+                      type="number"
+                      min={90}
+                      max={1080}
+                      step={1}
+                      value={config.mediaShareHeight}
+                      onChange={event => setConfig(current => ({ ...current, mediaShareHeight: Number(event.target.value) }))}
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
+                    />
+                  </label>
+                </div>
               </section>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">

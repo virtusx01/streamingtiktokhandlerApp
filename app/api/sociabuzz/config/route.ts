@@ -61,6 +61,22 @@ export async function GET() {
     useCustomSound: safeConfig.useCustomSound === true,
     customSoundUrl,
     defaultMediaUrl: isValidDefaultMediaUrl(safeConfig.defaultMediaUrl) ? safeConfig.defaultMediaUrl : '',
+    customMediaWidth: Number.isInteger(safeConfig.customMediaWidth) &&
+      safeConfig.customMediaWidth >= 120 && safeConfig.customMediaWidth <= 1920
+      ? safeConfig.customMediaWidth
+      : 220,
+    customMediaHeight: Number.isInteger(safeConfig.customMediaHeight) &&
+      safeConfig.customMediaHeight >= 90 && safeConfig.customMediaHeight <= 1080
+      ? safeConfig.customMediaHeight
+      : 180,
+    mediaShareWidth: Number.isInteger(safeConfig.mediaShareWidth) &&
+      safeConfig.mediaShareWidth >= 120 && safeConfig.mediaShareWidth <= 1920
+      ? safeConfig.mediaShareWidth
+      : 560,
+    mediaShareHeight: Number.isInteger(safeConfig.mediaShareHeight) &&
+      safeConfig.mediaShareHeight >= 90 && safeConfig.mediaShareHeight <= 1080
+      ? safeConfig.mediaShareHeight
+      : 315,
     ttsVoice: typeof safeConfig.ttsVoice === 'string' && safeConfig.ttsVoice.length <= 300
       ? safeConfig.ttsVoice
       : DEFAULT_TTS_VOICE,
@@ -98,6 +114,10 @@ export async function POST(req: Request) {
       useCustomSound = false,
       customSoundUrl = '',
       defaultMediaUrl = '',
+      customMediaWidth = 220,
+      customMediaHeight = 180,
+      mediaShareWidth = 560,
+      mediaShareHeight = 315,
       ttsVoice = DEFAULT_TTS_VOICE,
       ttsRate = 1,
       ttsPitch = 1,
@@ -137,6 +157,18 @@ export async function POST(req: Request) {
     if (!isValidDefaultMediaUrl(defaultMediaUrl)) {
       return NextResponse.json({ error: 'URL media default harus berupa URL HTTPS langsung ke file gambar atau video, seperti WebM.' }, { status: 400 });
     }
+    if (!Number.isInteger(customMediaWidth) || customMediaWidth < 120 || customMediaWidth > 1920) {
+      return NextResponse.json({ error: 'Lebar media default harus antara 120 dan 1920 piksel.' }, { status: 400 });
+    }
+    if (!Number.isInteger(customMediaHeight) || customMediaHeight < 90 || customMediaHeight > 1080) {
+      return NextResponse.json({ error: 'Tinggi media default harus antara 90 dan 1080 piksel.' }, { status: 400 });
+    }
+    if (!Number.isInteger(mediaShareWidth) || mediaShareWidth < 120 || mediaShareWidth > 1920) {
+      return NextResponse.json({ error: 'Lebar MediaShare harus antara 120 dan 1920 piksel.' }, { status: 400 });
+    }
+    if (!Number.isInteger(mediaShareHeight) || mediaShareHeight < 90 || mediaShareHeight > 1080) {
+      return NextResponse.json({ error: 'Tinggi MediaShare harus antara 90 dan 1080 piksel.' }, { status: 400 });
+    }
     if (
       typeof ttsVoice !== 'string' ||
       ttsVoice.length > 300 ||
@@ -164,6 +196,10 @@ export async function POST(req: Request) {
       useCustomSound,
       customSoundUrl,
       defaultMediaUrl,
+      customMediaWidth,
+      customMediaHeight,
+      mediaShareWidth,
+      mediaShareHeight,
       ttsVoice,
       ttsRate,
       ttsPitch,

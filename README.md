@@ -23,8 +23,10 @@ When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
 the player is shown immediately inside the existing `.custom-media` slot,
 paused and muted while the alert is being read. It starts playing with audio
 after TTS finishes. The player exactly follows the slot's position and
-dimensions, so it does not overlap the content below; edit the slot's CSS to
-change its size. The third-party player is hosted by the overlay page so
+dimensions, so it does not overlap the content below. The admin settings
+provide separate width and height controls for ordinary alerts and MediaShare;
+MediaShare dimensions only apply when a shared URL is present. The third-party
+player is hosted by the overlay page so
 YouTube receives its required page referrer, while custom alert JavaScript
 remains sandboxed. Keep one `.custom-media` inside `.cyber-alert`, before
 `.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
@@ -40,6 +42,8 @@ The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
 It is shown in the media slot only when an alert has no shared/media URL.
+Configure the default and MediaShare slot dimensions independently in the
+admin panel; those controls override CSS width and height for `.custom-media`.
 When a share URL arrives, the player replaces the default media in that slot.
 The default template places the slot above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
