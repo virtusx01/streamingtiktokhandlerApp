@@ -50,7 +50,9 @@ admin panel; those controls override CSS width and height for `.custom-media`.
 When a share URL arrives, the player replaces the default media in that slot.
 The default template places the slot above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
-close the player.
+close the player. Direct video, YouTube, and TikTok playback do not loop; when
+the player reports that the media ended, the overlay immediately fades out and
+the next queued alert can proceed.
 
 SociaBuzz MediaShare events arrive on the account's Ably realtime channel, not
 necessarily in the donation webhook. The overlay subscribes using the public

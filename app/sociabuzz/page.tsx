@@ -180,6 +180,7 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = fa
       autoplay: playing ? '1' : '0',
       controls: '1',
       enablejsapi: '1',
+      loop: '0',
       mute: playing ? '0' : '1',
       playsinline: '1',
       rel: '0',
@@ -198,7 +199,7 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = fa
     const params = new URLSearchParams({
       autoplay: playing ? '1' : '0',
       muted: playing ? '0' : '1',
-      loop: '1',
+      loop: '0',
       controls: '1',
     });
     return `https://www.tiktok.com/player/v1/${videoId}?${params}`;
@@ -214,10 +215,12 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = fa
 function SociaBuzzShareEmbed({
   overlay,
   onStarted,
+  onEnded,
   onUnavailable,
 }: {
   overlay: SharePlayerOverlay;
   onStarted: () => void;
+  onEnded: () => void;
   onUnavailable: () => void;
 }) {
   const style = {
@@ -232,11 +235,20 @@ function SociaBuzzShareEmbed({
   };
   const videoRef = useRef<HTMLVideoElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [frameLoadVersion, setFrameLoadVersion] = useState(0);
   const isTikTokPlayer = (() => {
     const normalizedUrl = normalizeSupportedShareUrl(overlay.url);
     if (!normalizedUrl) return false;
     const host = new URL(normalizedUrl).hostname.toLowerCase();
     return host === 'tiktok.com' || host.endsWith('.tiktok.com');
+  })();
+  const isYouTubePlayer = (() => {
+    const normalizedUrl = normalizeSupportedShareUrl(overlay.url);
+    if (!normalizedUrl) return false;
+    const host = new URL(normalizedUrl).hostname.toLowerCase();
+    return host === 'youtube.com' || host.endsWith('.youtube.com') ||
+      host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com') ||
+      host === 'youtu.be';
   })();
 
   useEffect(() => {
@@ -269,13 +281,50 @@ function SociaBuzzShareEmbed({
         player?.postMessage({ type: 'play', 'x-tiktok-player': true }, 'https://www.tiktok.com');
       } else if (event.data.type === 'onStateChange' && event.data.value === 1) {
         onStarted();
+      } else if (event.data.type === 'onStateChange' && event.data.value === 0) {
+        onEnded();
       } else if (event.data.type === 'onPlayerError') {
         onUnavailable();
       }
     };
     window.addEventListener('message', handleTikTokPlayerMessage);
     return () => window.removeEventListener('message', handleTikTokPlayerMessage);
-  }, [isTikTokPlayer, onStarted, onUnavailable, overlay.playing]);
+  }, [isTikTokPlayer, onEnded, onStarted, onUnavailable, overlay.playing]);
+
+  useEffect(() => {
+    if (!isYouTubePlayer || !overlay.playing) return;
+    const handleYouTubePlayerMessage = (event: MessageEvent) => {
+      let isYouTubeOrigin = false;
+      try {
+        const host = new URL(event.origin).hostname.toLowerCase();
+        isYouTubeOrigin = host === 'youtube.com' || host.endsWith('.youtube.com') ||
+          host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com');
+      } catch {
+        return;
+      }
+      if (event.source !== frameRef.current?.contentWindow || !isYouTubeOrigin) return;
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          return;
+        }
+      }
+      if (!data || typeof data !== 'object') return;
+      if (data.event === 'onStateChange' && data.info === 0) onEnded();
+      if (data.event === 'infoDelivery' && data.info?.playerState === 0) onEnded();
+      if (data.event === 'onError') onUnavailable();
+    };
+    window.addEventListener('message', handleYouTubePlayerMessage);
+    if (frameLoadVersion > 0) {
+      frameRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }),
+        'https://www.youtube.com',
+      );
+    }
+    return () => window.removeEventListener('message', handleYouTubePlayerMessage);
+  }, [frameLoadVersion, isYouTubePlayer, onEnded, onUnavailable, overlay.playing]);
 
   const directVideoUrl = normalizeDirectVideoUrl(overlay.url);
   if (directVideoUrl) {
@@ -290,6 +339,7 @@ function SociaBuzzShareEmbed({
         controls
         style={{ ...style, objectFit: 'contain' }}
         onPlaying={onStarted}
+        onEnded={onEnded}
         onError={onUnavailable}
       />
     );
@@ -304,6 +354,7 @@ function SociaBuzzShareEmbed({
       allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
       referrerPolicy="strict-origin-when-cross-origin"
       style={style}
+      onLoad={() => setFrameLoadVersion(version => version + 1)}
     />
   );
 }
@@ -1314,9 +1365,15 @@ export default function SociabuzzPage() {
         : Promise.resolve();
     }
 
+    let resolveMinimumVisibleTime: (() => void) | null = null;
     try {
       const minimumVisibleTime = new Promise<void>(resolve => {
-        alertTimerRef.current = window.setTimeout(resolve, currentConfig.durationMs);
+        resolveMinimumVisibleTime = resolve;
+        alertTimerRef.current = window.setTimeout(() => {
+          alertTimerRef.current = null;
+          resolve();
+          resolveMinimumVisibleTime = null;
+        }, currentConfig.durationMs);
       });
       const template = currentConfig.mode === 'custom' ? currentConfig.html : DEFAULT_HTML;
       const actionHtml = /<[^>]*class=["'][^"']*\baction\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i.exec(template)?.[1] ?? '';
@@ -1377,7 +1434,16 @@ export default function SociabuzzPage() {
             if (timers.startup !== undefined) window.clearTimeout(timers.startup);
             if (sharePlaybackStartedRef.current === beginPlaybackWindow) sharePlaybackStartedRef.current = null;
             if (sharePlaybackEndedRef.current === finish) sharePlaybackEndedRef.current = null;
-            resolve();
+            if (alertTimerRef.current !== null) {
+              window.clearTimeout(alertTimerRef.current);
+              alertTimerRef.current = null;
+            }
+            resolveMinimumVisibleTime?.();
+            resolveMinimumVisibleTime = null;
+            alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:alert-hide' }, '*');
+            setSharePlayerOverlay(null);
+            setVisible(false);
+            window.setTimeout(resolve, 300);
           };
           const beginPlaybackWindow = () => {
             if (settled || timers.duration !== undefined) return;
@@ -1773,6 +1839,7 @@ export default function SociabuzzPage() {
         <SociaBuzzShareEmbed
           overlay={sharePlayerOverlay}
           onStarted={notifyShareMediaStarted}
+          onEnded={notifyShareMediaEnded}
           onUnavailable={notifyShareMediaEnded}
         />
       )}
