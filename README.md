@@ -20,8 +20,8 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the alert replaces `.custom-media` with the platform's official embedded player
-after TTS finishes. YouTube and TikTok autoplay muted to comply with browser
+the alert displays a YouTube thumbnail as soon as the notification appears, then
+starts the platform's embedded player after TTS finishes. YouTube and TikTok autoplay muted to comply with browser
 autoplay restrictions. Platform privacy settings, embed permissions, or browser
 policies can still prevent playback; the original post link remains available
 as a fallback. YouTube embeds use the standard player URL, preserve the browser

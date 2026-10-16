@@ -172,7 +172,8 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     return window.sociabuzzYouTubeApiPromise;
   };
 
-  const showSharePlayer = () => {
+  let userRequestedPlayback = false;
+  const showSharePlayer = (startPlayback = false) => {
     const shareUrl = getShareUrl();
     const options = window.sociabuzz?.overlayOptions || {};
     if (!shareUrl || !options.mediashareActive ||
@@ -211,6 +212,35 @@ const SHARE_MEDIA_BRIDGE = `(() => {
       return;
     }
 
+    const isYouTubePlayer = new URL(playerUrl).hostname === 'www.youtube.com';
+    const videoId = isYouTubePlayer ? new URL(playerUrl).pathname.split('/').filter(Boolean).pop() : '';
+    let poster = null;
+    if (isYouTubePlayer) {
+      poster = document.createElement('button');
+      poster.type = 'button';
+      poster.dataset.sociabuzzVideoPoster = 'true';
+      poster.setAttribute('aria-label', 'Putar video YouTube');
+      poster.style.cssText = 'position:absolute;inset:0;z-index:2;width:100%;height:100%;padding:0;border:0;border-radius:12px;background:#111;cursor:pointer;overflow:hidden';
+      const thumbnail = document.createElement('img');
+      thumbnail.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId || '') + '/hqdefault.jpg';
+      thumbnail.alt = '';
+      thumbnail.style.cssText = 'width:100%;height:100%;object-fit:cover';
+      thumbnail.addEventListener('error', () => thumbnail.remove(), { once: true });
+      const playIcon = document.createElement('span');
+      playIcon.textContent = '▶';
+      playIcon.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:48px;border-radius:14px;background:#f03;color:white;font:32px/48px sans-serif;text-align:center;box-shadow:0 2px 8px #0008';
+      poster.append(thumbnail, playIcon);
+      poster.addEventListener('click', () => {
+        userRequestedPlayback = true;
+        if (youTubePlayer) youTubePlayer.playVideo();
+      });
+    }
+    if (!startPlayback) {
+      if (poster) container.appendChild(poster);
+      container.appendChild(link);
+      return;
+    }
+
     const frame = document.createElement('iframe');
     frame.src = playerUrl;
     frame.dataset.sociabuzzSharePlayer = 'true';
@@ -218,9 +248,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;background:transparent';
-    const isYouTubePlayer = new URL(playerUrl).hostname === 'www.youtube.com';
     let playerReady = false;
-    let userRequestedPlayback = false;
     let youTubePlayer = null;
     const handlePlayerMessage = event => {
       if (event.source === frame.contentWindow && event.origin === 'https://www.tiktok.com' &&
@@ -259,27 +287,8 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     status.style.cssText = 'position:absolute;z-index:1;color:#fff;font:12px sans-serif;pointer-events:none';
     container.style.position = 'relative';
     container.append(frame, status, link);
+    if (poster) container.appendChild(poster);
     if (isYouTubePlayer) {
-      const videoId = new URL(playerUrl).pathname.split('/').filter(Boolean).pop();
-      const poster = document.createElement('button');
-      poster.type = 'button';
-      poster.dataset.sociabuzzVideoPoster = 'true';
-      poster.setAttribute('aria-label', 'Putar video YouTube');
-      poster.style.cssText = 'position:absolute;inset:0;z-index:2;width:100%;height:100%;padding:0;border:0;border-radius:12px;background:#111;cursor:pointer;overflow:hidden';
-      const thumbnail = document.createElement('img');
-      thumbnail.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId || '') + '/hqdefault.jpg';
-      thumbnail.alt = '';
-      thumbnail.style.cssText = 'width:100%;height:100%;object-fit:cover';
-      thumbnail.addEventListener('error', () => thumbnail.remove(), { once: true });
-      const playIcon = document.createElement('span');
-      playIcon.textContent = '▶';
-      playIcon.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:48px;border-radius:14px;background:#f03;color:white;font:32px/48px sans-serif;text-align:center;box-shadow:0 2px 8px #0008';
-      poster.append(thumbnail, playIcon);
-      poster.addEventListener('click', () => {
-        userRequestedPlayback = true;
-        if (playerReady) youTubePlayer?.playVideo();
-      }, { once: true });
-      container.appendChild(poster);
       void loadYouTubeApi().then(YT => {
         if (!frame.isConnected) return;
         youTubePlayer = new YT.Player(frame, {
@@ -310,7 +319,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
     if (event.data?.type === 'sociabuzz:tts-finished') {
-      showSharePlayer();
+      showSharePlayer(true);
     } else if (event.data?.type === 'sociabuzz:alert-hide') {
       if (activePlayerMessageHandler) {
         window.removeEventListener('message', activePlayerMessageHandler);
@@ -320,6 +329,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
       document.querySelector('.custom-media')?.replaceChildren();
     }
   });
+  showSharePlayer(false);
 })();`;
 
 const DEFAULT_OVERLAY_OPTIONS: SociaBuzzOverlayOptions = {
