@@ -138,6 +138,25 @@ function normalizeSupportedShareUrl(value: string): string | null {
   return null;
 }
 
+function findSupportedShareUrl(value: unknown, depth = 0): string | null {
+  if (depth > 7 || value === null || value === undefined) return null;
+  if (typeof value === 'string') return normalizeSupportedShareUrl(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const url = findSupportedShareUrl(item, depth + 1);
+      if (url) return url;
+    }
+    return null;
+  }
+  if (typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      const url = findSupportedShareUrl(item, depth + 1);
+      if (url) return url;
+    }
+  }
+  return null;
+}
+
 function getSharePlayerUrl(shareUrl: string, autoplay: boolean): { url: string; videoId?: string } | null {
   const normalizedShareUrl = normalizeSupportedShareUrl(shareUrl);
   if (!normalizedShareUrl) return null;
@@ -1066,7 +1085,27 @@ export default function SociabuzzPage() {
       : Promise.resolve(null);
     let soundFailed = false;
 
-    setSharePlayerOverlay(null);
+    const initialShareUrl = nextAlert.shareUrl || findSupportedShareUrl(nextAlert.raw?.payload);
+    const normalizedInitialShareUrl = initialShareUrl
+      ? normalizeSupportedShareUrl(initialShareUrl)
+      : null;
+    const canShowShareMedia = overlayOptions.mediashareActive &&
+      !(nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW) &&
+      Boolean(normalizedInitialShareUrl);
+    setSharePlayerOverlay(
+      canShowShareMedia && normalizedInitialShareUrl
+        ? {
+            shareUrl: normalizedInitialShareUrl,
+            rect: {
+              left: Math.max(0, (window.innerWidth - 220) / 2),
+              top: Math.max(0, (window.innerHeight - 252) / 2),
+              width: Math.min(220, window.innerWidth),
+              height: Math.min(180, window.innerHeight),
+            },
+            autoplay: false,
+          }
+        : null,
+    );
     setAlert(nextAlert);
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -1123,7 +1162,7 @@ export default function SociabuzzPage() {
         : nextAlert.fromText || 'mengirim';
       const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
       const speechPlayback = soundPlayback.then(async () => {
-        if ((nextAlert.shareUrl && !overlayOptions.mediashareTTS) || !speechText) return;
+        if ((normalizedInitialShareUrl && !overlayOptions.mediashareTTS) || !speechText) return;
         setAudioStatus('speaking');
         setAudioStatusMessage('Membacakan notifikasi donasi...');
         try {
@@ -1142,7 +1181,7 @@ export default function SociabuzzPage() {
         }
       });
       const shareMediaVisibleTime = speechPlayback.then(() => {
-        if (!overlayOptions.mediashareActive || !nextAlert.shareUrl ||
+        if (!overlayOptions.mediashareActive || !normalizedInitialShareUrl ||
             (nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW)) return Promise.resolve();
         const playbackDurationMs = getMediaShareDurationMs(
           nextAlert.amount,
@@ -1173,6 +1212,20 @@ export default function SociabuzzPage() {
           sharePlaybackStartedRef.current = beginPlaybackWindow;
           sharePlaybackEndedRef.current = finish;
           timers.startup = window.setTimeout(finish, 20000);
+          setSharePlayerOverlay(previous => {
+            const shareUrl = normalizedInitialShareUrl;
+            if (!shareUrl) return previous;
+            return {
+              shareUrl,
+              rect: previous?.rect ?? {
+                left: Math.max(0, (window.innerWidth - 220) / 2),
+                top: Math.max(0, (window.innerHeight - 252) / 2),
+                width: Math.min(220, window.innerWidth),
+                height: Math.min(180, window.innerHeight),
+              },
+              autoplay: true,
+            };
+          });
           alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
         });
       });
@@ -1269,9 +1322,9 @@ export default function SociabuzzPage() {
         const shareUrlCandidate = typeof data.shareUrl === 'string' && data.shareUrl.trim()
           ? data.shareUrl
           : mediaUrl;
-        const shareUrl = normalizeSupportedShareUrl(
-          shareUrlCandidate,
-        ) ?? undefined;
+        const shareUrl = normalizeSupportedShareUrl(shareUrlCandidate) ??
+          findSupportedShareUrl(data.raw) ??
+          undefined;
         const incomingAlert: AlertData = {
           amount: typeof data.amount === 'string' ? data.amount : '0',
           supporter: typeof data.supporter === 'string' ? data.supporter : 'Supporter',
