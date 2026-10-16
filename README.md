@@ -32,6 +32,9 @@ clickable if autoplay is denied. YouTube links using either the standard `v`
 query or SociaBuzz's `videoId` query are recognized.
 The SociaBuzz settings panel contains **Test Alert Biasa** and **Test MediaShare**;
 the settings close after sending so each test is shown live by `/sociabuzz`.
+Each stored webhook log also has a **Putar ulang alert** action that republishes
+its saved mapped alert to the overlay; replay is available to authenticated
+admins only.
 The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.

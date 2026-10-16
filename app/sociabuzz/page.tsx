@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Copy, LoaderCircle, RefreshCw, Save, Settings, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { Code2, Copy, LoaderCircle, Play, RefreshCw, Save, Settings, Upload, Volume2, VolumeX, X } from 'lucide-react';
 import { Realtime, type InboundMessage } from 'ably';
 import { buildSociaBuzzSpeechText, cancelSociaBuzzSpeech, speakSociaBuzzAlert } from '@/lib/sociabuzz-tts';
 
@@ -697,6 +697,8 @@ export default function SociabuzzPage() {
   const [saving, setSaving] = useState(false);
   const [webhookLogs, setWebhookLogs] = useState<WebhookLog[]>([]);
   const [loadingWebhookLogs, setLoadingWebhookLogs] = useState(false);
+  const [replayingWebhookLogId, setReplayingWebhookLogId] = useState<string | null>(null);
+  const [replayedWebhookLogId, setReplayedWebhookLogId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [testError, setTestError] = useState('');
@@ -1485,6 +1487,31 @@ export default function SociabuzzPage() {
     }
   }, []);
 
+  const replayWebhookLog = async (logId: string) => {
+    setReplayingWebhookLogId(logId);
+    setReplayedWebhookLogId(null);
+    setError('');
+    try {
+      const response = await fetch('/api/sociabuzz/replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Gagal memutar ulang alert dari log webhook.');
+      setReplayedWebhookLogId(logId);
+      setSettingsOpen(false);
+      window.setTimeout(() => {
+        setReplayedWebhookLogId(current => current === logId ? null : current);
+      }, 2500);
+    } catch (replayError: unknown) {
+      console.error('[SociaBuzz] Webhook log replay failed:', replayError);
+      setError(replayError instanceof Error ? replayError.message : 'Gagal memutar ulang alert dari log webhook.');
+    } finally {
+      setReplayingWebhookLogId(null);
+    }
+  };
+
   useEffect(() => {
     if (settingsOpen && isAdmin) void loadWebhookLogs();
   }, [settingsOpen, isAdmin, loadWebhookLogs]);
@@ -1959,6 +1986,21 @@ export default function SociabuzzPage() {
                           </time>
                         </summary>
                         <div className="mt-3 space-y-3 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => void replayWebhookLog(log.id)}
+                            disabled={replayingWebhookLogId !== null}
+                            className="flex items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-60"
+                          >
+                            {replayingWebhookLogId === log.id
+                              ? <LoaderCircle size={14} className="animate-spin" />
+                              : <Play size={14} />}
+                            {replayingWebhookLogId === log.id
+                              ? 'Mengirim ulang...'
+                              : replayedWebhookLogId === log.id
+                                ? 'Alert diputar ulang'
+                                : 'Putar ulang alert'}
+                          </button>
                           <div>
                             <p className="mb-1 font-semibold text-violet-200">Hasil mapping alert</p>
                             <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-950 p-2 text-slate-300">{JSON.stringify(log.mapped, null, 2)}</pre>
