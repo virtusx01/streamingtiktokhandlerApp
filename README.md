@@ -20,18 +20,17 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the player appears centered over the existing `.custom-media` slot after TTS.
-The alert HTML/CSS keep control of that slot; the system does not move or resize
-it. The default slot measures 220 × 180 px. Player width and height are
-independently configurable in SociaBuzz settings. The third-party player is
-hosted by the overlay page so YouTube receives its required page referrer,
-while custom alert JavaScript remains sandboxed. Keep one `.custom-media`
-inside `.cyber-alert`, before
+the player is shown immediately inside the existing `.custom-media` slot,
+paused and muted while the alert is being read. It starts playing with audio
+after TTS finishes. The player exactly follows the slot's position and
+dimensions, so it does not overlap the content below; edit the slot's CSS to
+change its size. The third-party player is hosted by the overlay page so
+YouTube receives its required page referrer, while custom alert JavaScript
+remains sandboxed. Keep one `.custom-media` inside `.cyber-alert`, before
 `.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
-are supported. Browser autoplay
-restrictions cannot be bypassed with a synthetic click, so the player remains
-clickable if autoplay is denied. YouTube links using either the standard `v`
-query or SociaBuzz's `videoId` query are recognized.
+are supported. Browser autoplay restrictions can still prevent playback with
+audio, in which case the player remains clickable. YouTube links using either
+the standard `v` query or SociaBuzz's `videoId` query are recognized.
 The SociaBuzz settings panel contains **Test Alert Biasa** and **Test MediaShare**;
 the settings close after sending so each test is shown live by `/sociabuzz`.
 Each stored webhook log also has a **Putar ulang alert** action that republishes
@@ -41,7 +40,7 @@ The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
 It is shown in the media slot only when an alert has no shared/media URL.
-When a share URL arrives, the player overlays the default media at that slot.
+When a share URL arrives, the player replaces the default media in that slot.
 The default template places the slot above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player.

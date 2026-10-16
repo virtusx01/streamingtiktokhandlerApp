@@ -14,8 +14,6 @@ type AlertConfig = {
   useCustomSound: boolean;
   customSoundUrl: string;
   defaultMediaUrl: string;
-  mediaShareWidth: number;
-  mediaShareHeight: number;
   ttsVoice: string;
   ttsRate: number;
   ttsPitch: number;
@@ -71,6 +69,7 @@ type SharePlayerOverlay = {
   top: number;
   width: number;
   height: number;
+  playing: boolean;
 };
 
 type SociaBuzzOverlayOptions = {
@@ -150,7 +149,7 @@ function normalizeDirectVideoUrl(value: string): string | null {
   }
 }
 
-function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0): string | null {
+function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = false): string | null {
   const directVideoUrl = normalizeDirectVideoUrl(shareUrl);
   if (directVideoUrl) return directVideoUrl;
   const normalizedUrl = normalizeSupportedShareUrl(shareUrl);
@@ -174,10 +173,10 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0): string | nu
       '';
     if (!/^[\w-]{11}$/.test(videoId)) return null;
     const params = new URLSearchParams({
-      autoplay: '1',
+      autoplay: playing ? '1' : '0',
       controls: '1',
       enablejsapi: '1',
-      mute: '1',
+      mute: playing ? '0' : '1',
       playsinline: '1',
       rel: '0',
       origin: window.location.origin,
@@ -192,7 +191,12 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0): string | nu
     const videoIndex = parts.indexOf('video');
     const videoId = videoIndex >= 0 ? parts[videoIndex + 1] || '' : '';
     if (!/^\d+$/.test(videoId)) return null;
-    const params = new URLSearchParams({ autoplay: '1', muted: '1', loop: '1', controls: '1' });
+    const params = new URLSearchParams({
+      autoplay: playing ? '1' : '0',
+      muted: playing ? '0' : '1',
+      loop: '1',
+      controls: '1',
+    });
     return `https://www.tiktok.com/player/v1/${videoId}?${params}`;
   }
   if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
@@ -222,14 +226,27 @@ function SociaBuzzShareEmbed({
     border: 0,
     background: 'transparent',
   };
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      if (!overlay.playing) return;
+      videoRef.current.play().catch(error => {
+        console.error('[SociaBuzz] Shared video autoplay failed:', error);
+      });
+    }
+    else if (overlay.playing) onStarted();
+  }, [onStarted, overlay.playing]);
+
   const directVideoUrl = normalizeDirectVideoUrl(overlay.url);
   if (directVideoUrl) {
     return (
       <video
+        ref={videoRef}
         src={directVideoUrl}
         title="Media yang dibagikan"
-        autoPlay
-        muted
+        autoPlay={overlay.playing}
+        muted={!overlay.playing}
         playsInline
         controls
         style={{ ...style, objectFit: 'contain' }}
@@ -238,7 +255,7 @@ function SociaBuzzShareEmbed({
       />
     );
   }
-  const embedUrl = getSharePlayerEmbedUrl(overlay.url, overlay.startSeconds);
+  const embedUrl = getSharePlayerEmbedUrl(overlay.url, overlay.startSeconds, overlay.playing);
   if (!embedUrl) return null;
   return (
     <iframe
@@ -247,7 +264,6 @@ function SociaBuzzShareEmbed({
       allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
       referrerPolicy="strict-origin-when-cross-origin"
       style={style}
-      onLoad={onStarted}
     />
   );
 }
@@ -410,10 +426,9 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       notifyUnavailable();
       return;
     }
-    if (action !== 'play') return;
     const rect = slot.getBoundingClientRect();
     window.parent.postMessage({
-      type: 'sociabuzz:share-player-play',
+      type: action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
       shareUrl,
       startSeconds,
       rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
@@ -434,12 +449,17 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
 
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
-    if (event.data?.type === 'sociabuzz:share-player-play' &&
+    if ((event.data?.type === 'sociabuzz:share-player-prepare' ||
+         event.data?.type === 'sociabuzz:share-player-play') &&
         typeof event.data.shareUrl === 'string') {
       const data = window.sociabuzz || {};
       const options = data.overlayOptions || {};
       if (options.mediashareActive && !(data.isNsfw === true && !options.mediashareNSFW)) {
-        renderPlayer(event.data.shareUrl, 'play', Number(event.data.startSeconds) || 0);
+        renderPlayer(
+          event.data.shareUrl,
+          event.data.type === 'sociabuzz:share-player-play' ? 'play' : 'prepare',
+          Number(event.data.startSeconds) || 0,
+        );
       }
     }
     if (event.data?.type === 'sociabuzz:alert-hide') {
@@ -701,8 +721,6 @@ export default function SociabuzzPage() {
     useCustomSound: false,
     customSoundUrl: '',
     defaultMediaUrl: '',
-    mediaShareWidth: 560,
-    mediaShareHeight: 315,
     ttsVoice: 'browser:default',
     ttsRate: 1,
     ttsPitch: 1,
@@ -850,7 +868,9 @@ export default function SociabuzzPage() {
       if (event.source !== alertFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
       if (event.data.type === 'sociabuzz:share-player-started') notifyShareMediaStarted();
       if (event.data.type === 'sociabuzz:share-player-unavailable') notifyShareMediaEnded();
-      if (event.data.type !== 'sociabuzz:share-player-play' || typeof event.data.shareUrl !== 'string') return;
+      const isPrepare = event.data.type === 'sociabuzz:share-player-prepare';
+      if ((!isPrepare && event.data.type !== 'sociabuzz:share-player-play') ||
+          typeof event.data.shareUrl !== 'string') return;
       const overlayOptions = readSociaBuzzOverlayOptions();
       if (!overlayOptions.mediashareActive || (alert?.isNsfw === true && !overlayOptions.mediashareNSFW)) return;
       const startSeconds = Number(event.data.startSeconds) || 0;
@@ -871,15 +891,19 @@ export default function SociabuzzPage() {
       const slotTop = frameRect.top + rect.top * scaleY;
       const slotWidth = rect.width * scaleX;
       const slotHeight = rect.height * scaleY;
-      const width = config.mediaShareWidth;
-      const height = config.mediaShareHeight;
-      const left = Math.max(0, Math.min(window.innerWidth - width, slotLeft + (slotWidth - width) / 2));
-      const top = Math.max(0, Math.min(window.innerHeight - height, slotTop + (slotHeight - height) / 2));
-      setSharePlayerOverlay({ url: event.data.shareUrl, startSeconds, left, top, width, height });
+      setSharePlayerOverlay({
+        url: event.data.shareUrl,
+        startSeconds,
+        left: slotLeft,
+        top: slotTop,
+        width: slotWidth,
+        height: slotHeight,
+        playing: !isPrepare,
+      });
     };
     window.addEventListener('message', handleSharePlayerEvent);
     return () => window.removeEventListener('message', handleSharePlayerEvent);
-  }, [alert?.isNsfw, config.mediaShareHeight, config.mediaShareWidth, notifyShareMediaEnded, notifyShareMediaStarted]);
+  }, [alert?.isNsfw, notifyShareMediaEnded, notifyShareMediaStarted]);
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) audioContextRef.current = new AudioContext();
@@ -1136,6 +1160,11 @@ export default function SociabuzzPage() {
     const normalizedInitialShareUrl = initialShareUrl
       ? normalizeSupportedShareUrl(initialShareUrl)
       : null;
+    const shareCandidatePromise = normalizedInitialShareUrl
+      ? Promise.resolve({ shareUrl: normalizedInitialShareUrl, startSeconds: 0 })
+      : overlayOptions.mediashareActive
+        ? waitForSociaBuzzShare(nextAlert)
+        : Promise.resolve(null);
     setAlert(nextAlert);
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -1210,14 +1239,11 @@ export default function SociabuzzPage() {
           setAudioStatusMessage('TTS gagal — periksa izin suara browser');
         }
       });
-      const shareMediaVisibleTime = speechPlayback.then(async () => {
+      const shareMediaVisibleTime = (async () => {
         if (!overlayOptions.mediashareActive ||
             (nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW)) return Promise.resolve();
-        const realtimeCandidate = normalizedInitialShareUrl
-          ? null
-          : await waitForSociaBuzzShare(nextAlert);
-        const shareUrl = normalizedInitialShareUrl || realtimeCandidate?.shareUrl;
-        if (!shareUrl) return Promise.resolve();
+        const candidate = await shareCandidatePromise;
+        if (!candidate) return;
 
         const playbackDurationMs = getMediaShareDurationMs(
           nextAlert.amount,
@@ -1226,8 +1252,17 @@ export default function SociabuzzPage() {
         );
         if (playbackDurationMs === null) {
           console.warn('[SociaBuzz] Shared media amount is below its configured minimum; skipping player.');
-          return Promise.resolve();
+          return;
         }
+        const playerMessage = {
+          shareUrl: candidate.shareUrl,
+          startSeconds: candidate.startSeconds,
+        };
+        alertFrameRef.current?.contentWindow?.postMessage({
+          type: 'sociabuzz:share-player-prepare',
+          ...playerMessage,
+        }, '*');
+        await speechPlayback;
         return new Promise<void>(resolve => {
           const timers: { startup?: number; duration?: number } = {};
           let settled = false;
@@ -1250,11 +1285,10 @@ export default function SociabuzzPage() {
           timers.startup = window.setTimeout(finish, 20000);
           alertFrameRef.current?.contentWindow?.postMessage({
             type: 'sociabuzz:share-player-play',
-            shareUrl,
-            startSeconds: realtimeCandidate?.startSeconds ?? 0,
+            ...playerMessage,
           }, '*');
         });
-      });
+      })();
       await Promise.all([speechPlayback, minimumVisibleTime, shareMediaVisibleTime]);
     } catch (queueError) {
       soundFailed = true;
@@ -1986,41 +2020,6 @@ export default function SociabuzzPage() {
                     style={{ backgroundImage: `url("${config.defaultMediaUrl}")` }}
                   />
                 )}
-              </section>
-
-              <section className="rounded-xl border border-violet-400/20 bg-slate-900/70 p-4">
-                <h2 className="text-sm font-semibold">Ukuran media share embed</h2>
-                <p className="mb-3 mt-1 text-xs leading-5 text-slate-400">
-                  Atur lebar dan tinggi player MediaShare secara terpisah dari ukuran `.custom-media`. Embed akan tetap diposisikan di tengah slot media.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label htmlFor="sociabuzz-media-share-width" className="text-xs text-slate-300">
-                    Lebar (px)
-                    <input
-                      id="sociabuzz-media-share-width"
-                      type="number"
-                      min={120}
-                      max={1920}
-                      step={1}
-                      value={config.mediaShareWidth}
-                      onChange={event => setConfig(current => ({ ...current, mediaShareWidth: Number(event.target.value) }))}
-                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
-                    />
-                  </label>
-                  <label htmlFor="sociabuzz-media-share-height" className="text-xs text-slate-300">
-                    Tinggi (px)
-                    <input
-                      id="sociabuzz-media-share-height"
-                      type="number"
-                      min={90}
-                      max={1080}
-                      step={1}
-                      value={config.mediaShareHeight}
-                      onChange={event => setConfig(current => ({ ...current, mediaShareHeight: Number(event.target.value) }))}
-                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
-                    />
-                  </label>
-                </div>
               </section>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
