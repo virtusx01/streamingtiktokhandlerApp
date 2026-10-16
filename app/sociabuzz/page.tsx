@@ -357,7 +357,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       });
       const appOrigin = (window.sociabuzz || {}).appOrigin;
       if (typeof appOrigin === 'string' && appOrigin) {
-        params.set('widget_referrer', appOrigin);
+        params.set('widget_referrer', (window.sociabuzz || {}).appUrl || appOrigin);
       }
       if (autoplay && Number.isFinite(startSeconds) && startSeconds > 0) {
         params.set('start', String(Math.floor(startSeconds)));
@@ -599,6 +599,7 @@ function createDocument(
     ...(alert.raw ?? {}),
     amount: alert.amount,
     appOrigin: typeof window !== 'undefined' ? window.location.origin : '',
+    appUrl: typeof window !== 'undefined' ? window.location.href : '',
     supporter: alert.supporter,
     message: alert.message,
     mediaUrl: alert.mediaUrl,
@@ -629,7 +630,7 @@ function createDocument(
     ${overlayOptions.customized.from ? `.action,.dari,#from{color:${overlayColor(overlayOptions.colorFrom, overlayOptions.alphaFrom)}!important}` : ''}
     ${fontFamily ? `html,body,.cyber-alert,.cyber-card,.cyber-header,.badge,.action,.user,.cyber-msg{font-family:'${fontFamily}',sans-serif!important;font-weight:${fontWeight}!important}` : ''}
   </style>`;
-  return `<!doctype html><html><head><meta charset="utf-8">
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline' https://www.youtube.com; connect-src https://www.youtube.com https://youtube.com https://*.youtube.com https://youtubei.googleapis.com https://*.googlevideo.com https://*.ytimg.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://www.instagram.com https://*.instagram.com https://*.cdninstagram.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
     ${fontLink}<style>${safeCss}</style>${themeStyle}<style>
     </style></head><body>${html}
@@ -1564,9 +1565,10 @@ export default function SociabuzzPage() {
         <iframe
           ref={alertFrameRef}
           title="SociaBuzz alert"
-          sandbox="allow-scripts allow-same-origin allow-presentation"
+          sandbox="allow-scripts allow-presentation"
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-          src={`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`}
+          referrerPolicy="strict-origin-when-cross-origin"
+          srcDoc={previewHtml}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       )}
