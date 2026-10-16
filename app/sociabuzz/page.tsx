@@ -175,15 +175,22 @@ function normalizeDirectVideoUrl(value: string): string | null {
   }
 }
 
-function getSociaBuzzShareCandidate(value: unknown): SociaBuzzShareCandidate | null {
+function getSociaBuzzShareCandidate(value: unknown, eventName?: string): SociaBuzzShareCandidate | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
-  const message = typeof data.message === 'string' ? data.message : '';
-  if (!['notif_ms', 'replay_ms', 'test_ms'].includes(message)) return null;
+  const messageType = [data.message, data.type, data.event, eventName]
+    .find(item => typeof item === 'string' && ['notif_ms', 'replay_ms', 'test_ms'].includes(item.toLowerCase()));
+  if (typeof messageType !== 'string') return null;
 
   const shareUrl = findSupportedShareUrl(data.media_share) ??
+    findSupportedShareUrl(data.mediaShare) ??
     findSupportedShareUrl(data.shareUrl) ??
     findSupportedShareUrl(data.share_url) ??
+    findSupportedShareUrl(data.media_share_url) ??
+    findSupportedShareUrl(data.mediaShareUrl) ??
+    findSupportedShareUrl(data.video_url) ??
+    findSupportedShareUrl(data.videoUrl) ??
+    findSupportedShareUrl(data) ??
     (typeof data.tiktok === 'string' ? normalizeDirectVideoUrl(data.tiktok) : null);
   if (!shareUrl) return null;
 
@@ -957,7 +964,7 @@ export default function SociabuzzPage() {
           return;
         }
       }
-      const candidate = getSociaBuzzShareCandidate(payload);
+      const candidate = getSociaBuzzShareCandidate(payload, message.name);
       if (!candidate) return;
 
       const waiter = shareMediaWaiterRef.current;
