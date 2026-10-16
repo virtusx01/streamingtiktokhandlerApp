@@ -231,6 +231,13 @@ function SociaBuzzShareEmbed({
     background: 'transparent',
   };
   const videoRef = useRef<HTMLVideoElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const isTikTokPlayer = (() => {
+    const normalizedUrl = normalizeSupportedShareUrl(overlay.url);
+    if (!normalizedUrl) return false;
+    const host = new URL(normalizedUrl).hostname.toLowerCase();
+    return host === 'tiktok.com' || host.endsWith('.tiktok.com');
+  })();
 
   useEffect(() => {
     if (videoRef.current) {
@@ -239,8 +246,36 @@ function SociaBuzzShareEmbed({
         console.error('[SociaBuzz] Shared video autoplay failed:', error);
       });
     }
-    else if (overlay.playing) onStarted();
-  }, [onStarted, overlay.playing]);
+    else if (overlay.playing && !isTikTokPlayer) onStarted();
+  }, [isTikTokPlayer, onStarted, overlay.playing]);
+
+  useEffect(() => {
+    if (!isTikTokPlayer || !overlay.playing) return;
+    const handleTikTokPlayerMessage = (event: MessageEvent) => {
+      let isTikTokOrigin = false;
+      try {
+        const host = new URL(event.origin).hostname.toLowerCase();
+        isTikTokOrigin = host === 'tiktok.com' || host.endsWith('.tiktok.com');
+      } catch {
+        return;
+      }
+      if (event.source !== frameRef.current?.contentWindow || !isTikTokOrigin ||
+          !event.data || typeof event.data !== 'object' ||
+          event.data['x-tiktok-player'] !== true) return;
+
+      if (event.data.type === 'onPlayerReady') {
+        const player = frameRef.current?.contentWindow;
+        player?.postMessage({ type: 'unMute', 'x-tiktok-player': true }, 'https://www.tiktok.com');
+        player?.postMessage({ type: 'play', 'x-tiktok-player': true }, 'https://www.tiktok.com');
+      } else if (event.data.type === 'onStateChange' && event.data.value === 1) {
+        onStarted();
+      } else if (event.data.type === 'onPlayerError') {
+        onUnavailable();
+      }
+    };
+    window.addEventListener('message', handleTikTokPlayerMessage);
+    return () => window.removeEventListener('message', handleTikTokPlayerMessage);
+  }, [isTikTokPlayer, onStarted, onUnavailable, overlay.playing]);
 
   const directVideoUrl = normalizeDirectVideoUrl(overlay.url);
   if (directVideoUrl) {
@@ -263,6 +298,7 @@ function SociaBuzzShareEmbed({
   if (!embedUrl) return null;
   return (
     <iframe
+      ref={frameRef}
       title="Media yang dibagikan"
       src={embedUrl}
       allow="autoplay; encrypted-media; picture-in-picture; fullscreen"

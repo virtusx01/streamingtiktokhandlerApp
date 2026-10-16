@@ -31,7 +31,10 @@ YouTube receives its required page referrer, while custom alert JavaScript
 remains sandboxed. Keep one `.custom-media` inside `.cyber-alert`, before
 `.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
 are supported. Browser autoplay restrictions can still prevent playback with
-audio, in which case the player remains clickable. YouTube links using either
+audio, in which case the player remains clickable. Direct video and TikTok
+players are explicitly unmuted when playback starts. Instagram controls
+autoplay and audio within its own embed and does not expose the same player
+controls. YouTube links using either
 the standard `v` query or SociaBuzz's `videoId` query are recognized.
 The SociaBuzz settings panel contains **Test Alert Biasa** and **Test MediaShare**;
 the settings close after sending so each test is shown live by `/sociabuzz`.
