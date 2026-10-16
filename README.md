@@ -36,6 +36,8 @@ The regular test has no shared media, while MediaShare uses a public YouTube
 share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
 It is shown in the 16:9 slot only when an alert has no shared/media URL.
+The MediaShare player matches SociaBuzz's 16:9 embed size, up to 560 px wide
+and scaled down on narrower screens.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player.
 

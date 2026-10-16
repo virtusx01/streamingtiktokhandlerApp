@@ -91,6 +91,18 @@ type SharePlayerOverlay = {
   autoplay: boolean;
   startSeconds?: number;
 };
+
+function getDefaultSharePlayerRect(): SharePlayerRect {
+  const width = Math.min(560, window.innerWidth * 0.9, window.innerHeight * 0.9 * 16 / 9);
+  const height = width * 9 / 16;
+  return {
+    left: Math.max(0, (window.innerWidth - width) / 2),
+    top: Math.max(0, (window.innerHeight - height) / 2),
+    width,
+    height,
+  };
+}
+
 type SociaBuzzShareCandidate = {
   shareUrl: string;
   amount: string;
@@ -554,7 +566,7 @@ const SHARE_MEDIA_BRIDGE = `(() => {
     Object.assign(container.style, {
       order: '-1',
       boxSizing: 'border-box',
-      width: 'min(320px, 90vw)',
+      width: 'min(560px, 90vw)',
       height: 'auto',
       aspectRatio: '16 / 9',
       flex: '0 0 auto',
@@ -823,7 +835,7 @@ function createDocument(
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline' https://www.youtube.com; connect-src https://www.youtube.com https://youtube.com https://*.youtube.com https://youtubei.googleapis.com https://*.googlevideo.com https://*.ytimg.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://www.instagram.com https://*.instagram.com https://*.cdninstagram.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
     ${fontLink}<style>${safeCss}</style>${themeStyle}<style>
       .cyber-alert{display:flex!important;flex-direction:column!important;align-items:center!important}
-      .cyber-alert>.custom-media,.cyber-alert>.custom-video{order:-1!important;box-sizing:border-box!important;width:min(320px,90vw)!important;height:auto!important;aspect-ratio:16/9!important;flex:0 0 auto!important;margin:0 auto 12px!important;display:block!important;position:relative!important;overflow:hidden!important}
+      .cyber-alert>.custom-media,.cyber-alert>.custom-video{order:-1!important;box-sizing:border-box!important;width:min(560px,90vw)!important;height:auto!important;aspect-ratio:16/9!important;flex:0 0 auto!important;margin:0 auto 12px!important;display:block!important;position:relative!important;overflow:hidden!important}
       .cyber-alert>.custom-media{background-size:contain!important;background-repeat:no-repeat!important;background-position:center!important}
       .cyber-alert>.custom-video{object-fit:contain!important}
     </style></head><body>${html}
@@ -1349,12 +1361,7 @@ export default function SociabuzzPage() {
       canShowShareMedia && normalizedInitialShareUrl
         ? {
             shareUrl: normalizedInitialShareUrl,
-            rect: sharePlayerRectRef.current ?? {
-              left: Math.max(0, (window.innerWidth - 220) / 2),
-              top: Math.max(0, (window.innerHeight - 252) / 2),
-              width: Math.min(220, window.innerWidth),
-              height: Math.min(180, window.innerHeight),
-            },
+            rect: sharePlayerRectRef.current ?? getDefaultSharePlayerRect(),
             autoplay: false,
           }
         : null,
@@ -1474,12 +1481,7 @@ export default function SociabuzzPage() {
           setSharePlayerOverlay(previous => {
             return {
               shareUrl,
-              rect: sharePlayerRectRef.current ?? previous?.rect ?? {
-                left: Math.max(0, (window.innerWidth - 220) / 2),
-                top: Math.max(0, (window.innerHeight - 252) / 2),
-                width: Math.min(220, window.innerWidth),
-                height: Math.min(180, window.innerHeight),
-              },
+              rect: sharePlayerRectRef.current ?? previous?.rect ?? getDefaultSharePlayerRect(),
               autoplay: true,
               startSeconds: realtimeCandidate?.startSeconds,
             };
