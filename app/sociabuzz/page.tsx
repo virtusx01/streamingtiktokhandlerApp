@@ -188,15 +188,14 @@ function readSociaBuzzMediaShareProfileId(): string {
 }
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
-const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
+const DEFAULT_HTML = '<div class="cyber-alert"><div class="custom-media"></div><div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{amount}</span><span class="action">{from_text}</span><span class="user bell-ring">{supporter}</span></div><div class="cyber-msg">{message}</div></div></div>';
 const DEFAULT_CSS = `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;900&family=Rajdhani:wght@600;700&display=swap');
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;font-family:'Rajdhani',sans-serif;color:#fff;background:transparent}
 body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:transparent;overflow:hidden}
 .cyber-alert{display:flex;flex-direction:column;justify-content:center;align-items:center;max-width:480px;width:100%;margin:0 auto;font-family:'Rajdhani',sans-serif;animation:cyberPop .4s cubic-bezier(.18,.89,.32,1.28) forwards}
-.custom-media{width:min(100%,560px);aspect-ratio:16/9;height:auto;margin:0 auto 12px auto;background-size:contain;background-repeat:no-repeat;background-position:center;display:flex;align-items:center;justify-content:center;overflow:hidden;animation:randomShuffleMedia 25s infinite steps(1);border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
-.custom-media iframe,.custom-media video{display:block;width:100%;height:auto;aspect-ratio:16/9;border:0}
-.custom-video{width:min(100%,560px);aspect-ratio:16/9;height:auto;object-fit:contain;display:block;border-radius:16px;box-shadow:0 16px 35px rgba(0,0,0,.35)}
+.custom-media{width:220px;height:180px;margin:0 auto 12px;display:block;border-radius:16px;background-size:contain;background-repeat:no-repeat;background-position:center;overflow:hidden;box-shadow:0 16px 35px rgba(0,0,0,.35)}
+.custom-media>.custom-media-player{display:block;width:100%;height:100%;border:0;object-fit:contain}
 .cyber-card{position:relative;width:100%;background:transparent;padding:0 15px;color:#fff;text-align:center;box-sizing:border-box}
 .cyber-header{font-family:'Orbitron',sans-serif;font-size:1.1rem;margin-bottom:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;flex-wrap:wrap}
 .badge{background:#00ffcc;color:#0b0f19;padding:5px 12px;font-weight:900;border-radius:4px;display:inline-block;margin-right:4px;border:1.5px solid #000}
@@ -204,7 +203,6 @@ body{display:flex;align-items:center;justify-content:center;min-height:100vh;pad
 .user{color:#ff007f;font-weight:900;display:inline-block;margin-left:4px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
 .cyber-msg{font-size:1.25rem;font-weight:700;color:#fff;line-height:1.4;border:none;padding-top:4px;word-break:break-word;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
 .bell-ring{animation:bellShake 2s ease-in-out infinite}
-@keyframes randomShuffleMedia{0%,33.32%{background-image:url('https://xkslvfdguwvrhxetbmyw.supabase.co/storage/v1/object/public/assets/c-d-kompilasi-final.webp')}}
 @keyframes cyberPop{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1}}
 @keyframes bellShake{0%{transform:rotate(0)}5%{transform:rotate(14deg)}10%{transform:rotate(-12deg)}15%{transform:rotate(10deg)}20%{transform:rotate(-8deg)}25%{transform:rotate(4deg)}30%{transform:rotate(0)}100%{transform:rotate(0)}}`;
 const SHARE_MEDIA_BRIDGE = String.raw`(() => {
@@ -251,8 +249,49 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     return text.match(/https:\/\/[^\s<>"')\]]+/gi)?.find(isSocialUrl) || '';
   };
 
+  const getMediaSlot = () => document.querySelector('.custom-media');
+
+  const setDefaultMedia = () => {
+    const slot = getMediaSlot();
+    if (!slot) return;
+    const data = window.sociabuzz || {};
+    if (getShareUrl()) return;
+    const mediaUrl = typeof data.mediaUrl === 'string' && data.mediaUrl
+      ? data.mediaUrl
+      : data.defaultMediaUrl;
+    if (typeof mediaUrl !== 'string' || !mediaUrl) return;
+    let url;
+    try {
+      url = new URL(mediaUrl);
+    } catch {
+      return;
+    }
+    if (url.protocol !== 'https:') return;
+    if (/\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(url.href)) {
+      const video = document.createElement('video');
+      video.className = 'custom-media-player';
+      video.src = url.href;
+      video.autoplay = true;
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.style.width = '100%';
+      video.style.height = '100%';
+      slot.replaceChildren(video);
+      video.play().catch(error => console.error('[SociaBuzz] Default media autoplay failed:', error));
+      return;
+    }
+    const image = document.createElement('img');
+    image.className = 'custom-media-player';
+    image.src = url.href;
+    image.alt = '';
+    image.style.objectFit = 'contain';
+    image.addEventListener('error', () => console.error('[SociaBuzz] Default media image could not be loaded:', url.href), { once: true });
+    slot.replaceChildren(image);
+  };
+
   const renderPlayer = (shareUrl, action, startSeconds = 0) => {
-    const slot = document.querySelector('.custom-media, .custom-video');
+    const slot = getMediaSlot();
     const notifyUnavailable = () => window.parent.postMessage({ type: 'sociabuzz:share-player-unavailable' }, '*');
     if (!slot) {
       notifyUnavailable();
@@ -278,21 +317,18 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     if (/\.(mp4|webm|m4v|mov)$/i.test(url.pathname)) {
       const video = document.createElement('video');
       video.src = url.toString();
-      video.className = slot.tagName === 'VIDEO'
-        ? slot.className + ' sociabuzz-share-embed'
-        : 'sociabuzz-share-embed';
+      video.className = 'custom-media-player';
       video.autoplay = autoplay;
       video.muted = true;
       video.loop = true;
       video.playsInline = true;
       video.controls = true;
+      video.style.width = '100%';
+      video.style.height = '100%';
       video.addEventListener('playing', emitStarted, { once: true });
       video.addEventListener('error', notifyUnavailable, { once: true });
-      if (slot.tagName === 'VIDEO' || slot.matches('iframe.sociabuzz-share-embed')) {
-        slot.replaceWith(video);
-      } else {
-        slot.replaceChildren(video);
-      }
+      slot.style.backgroundImage = 'none';
+      slot.replaceChildren(video);
       if (autoplay) video.play().catch(error => console.error('[SociaBuzz] Shared video autoplay failed:', error));
       return;
     }
@@ -353,18 +389,17 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     const player = document.createElement('iframe');
     player.title = 'Media yang dibagikan';
     player.src = embedUrl;
-    player.className = 'sociabuzz-share-embed';
+    player.className = 'custom-media-player';
     player.width = '100%';
+    player.height = '100%';
+    player.style.width = '100%';
+    player.style.height = '100%';
     player.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
     player.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
     player.addEventListener('load', emitStarted, { once: true });
     player.addEventListener('error', notifyUnavailable, { once: true });
-    if (slot.tagName === 'VIDEO' || slot.matches('iframe.sociabuzz-share-embed')) {
-      player.className = slot.className + ' sociabuzz-share-embed';
-      slot.replaceWith(player);
-    } else {
-      slot.replaceChildren(player);
-    }
+    slot.style.backgroundImage = 'none';
+    slot.replaceChildren(player);
   };
 
   const requestPlayer = action => {
@@ -372,7 +407,10 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     const shareUrl = getShareUrl();
     const options = data.overlayOptions || {};
     const mediaShareAllowed = options.mediashareActive && !(data.isNsfw === true && !options.mediashareNSFW);
-    if (!mediaShareAllowed || !shareUrl) return;
+    if (!mediaShareAllowed || !shareUrl) {
+      setDefaultMedia();
+      return;
+    }
     renderPlayer(shareUrl, action);
   };
 
@@ -387,7 +425,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       }
     }
     if (event.data?.type === 'sociabuzz:alert-hide') {
-      document.querySelectorAll('.sociabuzz-share-embed').forEach(player => player.remove());
+      getMediaSlot()?.replaceChildren();
     }
   });
 
@@ -528,19 +566,9 @@ function escapeHtml(value: string) {
   })[character] || character);
 }
 
-function renderHtml(template: string, alert: AlertData, defaultMediaUrl: string) {
-  const hasShareUrl = Boolean(
-    normalizeSupportedShareUrl(alert.shareUrl ?? '') ||
-    findSupportedShareUrl(alert.raw),
-  );
-  const mediaUrl = alert.mediaUrl || (!hasShareUrl ? defaultMediaUrl : '');
-  const safeMediaUrl = escapeHtml(mediaUrl);
-  const isVideo = /^https:\/\//i.test(mediaUrl) && /\.(mp4|webm|m4v|mov)(?:$|[?#])/i.test(mediaUrl);
-  const mediaMarkup = isVideo
-    ? `<video class="custom-video" src="${safeMediaUrl}" autoplay muted playsinline loop></video>`
-    : `<div class="custom-media" style="background-image:url('${safeMediaUrl}');"></div>`;
-  return template.replace(/\{\{\s*(supporter|amount|message|mediaUrl|mediaMarkup|fromText|from_text)\s*\}\}/g, (_match, key: string) => {
-    if (key === 'mediaMarkup') return mediaMarkup;
+function renderHtml(template: string, alert: AlertData) {
+  return template.replace(/\{\{?\s*(supporter|amount|message|mediaUrl|mediaMarkup|fromText|from_text)\s*\}\}?/g, (_match, key: string) => {
+    if (key === 'mediaMarkup') return '<div class="custom-media"></div>';
     const safeKey = key === 'from_text' ? 'fromText' : key;
     const value = alert[safeKey as keyof AlertData] ?? (safeKey === 'fromText' ? 'mengirim' : '');
     return escapeHtml(String(value));
@@ -600,7 +628,6 @@ function createDocument(
   return `<!doctype html><html><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline' https://www.youtube.com; connect-src https://www.youtube.com https://youtube.com https://*.youtube.com https://youtubei.googleapis.com https://*.googlevideo.com https://*.ytimg.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://www.instagram.com https://*.instagram.com https://*.cdninstagram.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
     ${fontLink}<style>${safeCss}</style>${themeStyle}<style>
-      .custom-media .sociabuzz-share-embed,.custom-video .sociabuzz-share-embed,.sociabuzz-share-embed{display:block;width:100%;height:auto;aspect-ratio:16/9;border:0}
     </style></head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
@@ -1112,7 +1139,7 @@ export default function SociabuzzPage() {
       });
       const template = currentConfig.mode === 'custom' ? currentConfig.html : DEFAULT_HTML;
       const actionHtml = /<[^>]*class=["'][^"']*\baction\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i.exec(template)?.[1] ?? '';
-      const actionText = actionHtml && !/\{\{[^}]+\}\}/.test(actionHtml)
+      const actionText = actionHtml && !/\{\{?[^{}]+\}\}?/.test(actionHtml)
         ? actionHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').trim()
         : nextAlert.fromText || 'mengirim';
       const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
@@ -1368,7 +1395,7 @@ export default function SociabuzzPage() {
         }
       : alert;
     return createDocument(
-      renderHtml(template, templateData, config.defaultMediaUrl),
+      renderHtml(template, templateData),
       css,
       javascript,
       alert,
@@ -1667,7 +1694,7 @@ export default function SociabuzzPage() {
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code>; player YouTube, TikTok, atau Instagram dimasukkan ke slot <code>.custom-media</code> yang sudah ada setelah TTS selesai. HTML dan CSS kustom mengatur posisi serta ukuran slot; sistem hanya menjaga rasio embed 16:9 dan tidak memindahkan slot. Letakkan <code>{'{{mediaMarkup}}'}</code> sebelum <code>.cyber-card</code> di dalam <code>.cyber-alert</code>. URL payload yang dikenali juga tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>overlayOptions</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. Parameter MediaShare dari query URL dapat mengatur warna, opacity, font, TTS, embed, dan izin konten bertanda NSFW. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
+                      Media share YouTube, TikTok, atau Instagram akan menggantikan isi slot <code>.custom-media</code> setelah TTS selesai; jika tidak ada media share, slot menampilkan URL media default. Posisi dan ukuran slot sepenuhnya diatur HTML/CSS kustom (template default berukuran 220×180 px). Gunakan satu <code>.custom-media</code> di dalam <code>.cyber-alert</code>, sebelum <code>.cyber-card</code>. Placeholder <code>{'{amount}'}</code>, <code>{'{from_text}'}</code>, <code>{'{supporter}'}</code>, dan <code>{'{message}'}</code> maupun format lama dua kurung kurawal tetap didukung. URL payload tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>overlayOptions</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. Parameter MediaShare dari query URL dapat mengatur warna, opacity, font, TTS, embed, dan izin konten bertanda NSFW. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>
@@ -1843,7 +1870,7 @@ export default function SociabuzzPage() {
               <section className="rounded-xl border border-cyan-400/20 bg-slate-900/70 p-4">
                 <label htmlFor="sociabuzz-default-media" className="mb-2 block text-sm font-semibold">Media default `.custom-media`</label>
                 <p className="mb-3 text-xs leading-5 text-slate-400">
-                  Ditampilkan di slot 16:9 bila alert tidak menerima URL MediaShare atau URL media. Gunakan URL publik HTTPS langsung ke file, misalnya WebM, MP4, atau gambar.
+                  Ditampilkan di `.custom-media` hanya jika alert tidak menerima URL MediaShare atau URL media. Ukuran dan posisi mengikuti CSS `.custom-media`. Gunakan URL publik HTTPS langsung ke file, misalnya WebM, MP4, atau gambar.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <input

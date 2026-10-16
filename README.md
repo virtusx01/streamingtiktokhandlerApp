@@ -21,11 +21,12 @@ and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescr
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
 the platform player is embedded inside the existing media slot in the custom
-alert iframe. Playback starts after TTS. The player keeps a 16:9 aspect ratio
-and scales to the slot's width; the alert HTML/CSS control the slot's position
-and layout. The system does not create or move the slot. Include
-`{{mediaMarkup}}` before `.cyber-card` inside `.cyber-alert`, or provide a
-`.custom-media`/`.custom-video` slot in custom HTML. Browser autoplay
+alert iframe. Playback starts after TTS. The embed fills the existing
+`.custom-media` slot; its position and dimensions are controlled by alert
+HTML/CSS, without the system moving or resizing it. The default slot measures
+220 × 180 px. Keep one `.custom-media` inside `.cyber-alert`, before
+`.cyber-card`; both `{amount}`-style and `{{amount}}`-style text placeholders
+are supported. Browser autoplay
 restrictions cannot be bypassed with a synthetic click, so the player remains
 clickable if autoplay is denied. YouTube links using either the standard `v`
 query or SociaBuzz's `videoId` query are recognized.
@@ -36,9 +37,8 @@ share URL. A public HTTPS image or video URL can be configured as the default
 `.custom-media` fallback; WebM, MP4, and common image formats are supported.
 It is shown in the media slot only when an alert has no shared/media URL.
 The shared embed is inserted inside the existing `.custom-media` slot;
-its dimensions follow that slot, while HTML and custom CSS control the slot's
-position, width, and layout. The default template places it above
-`.cyber-card` inside `.cyber-alert`.
+it replaces the default image/video in that slot when a share URL arrives.
+The default template places it above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player.
 
