@@ -34,6 +34,7 @@ type AlertData = {
   message: string;
   mediaUrl: string;
   shareUrl?: string;
+  isNsfw?: boolean;
   soundUrl?: string;
   fromText?: string;
   raw?: {
@@ -42,6 +43,7 @@ type AlertData = {
     message: string | number | null;
     mediaUrl: string | number | null;
     shareUrl?: string | null;
+    isNsfw?: boolean | null;
     soundUrl?: string | null;
     fromText: string | number | null;
     payload: unknown;
@@ -57,6 +59,25 @@ type WebhookLog = {
 };
 
 type AudioStatus = 'locked' | 'ready' | 'checking' | 'playing' | 'speaking' | 'error';
+
+type SociaBuzzOverlayOptions = {
+  colorName: string;
+  alphaName: number;
+  colorNote: string;
+  alphaNote: number;
+  colorFrom: string;
+  alphaFrom: number;
+  mediashareActive: boolean;
+  mediashareTTS: boolean;
+  font: string;
+  mediashareNSFW: boolean;
+  customized: {
+    name: boolean;
+    note: boolean;
+    from: boolean;
+    font: boolean;
+  };
+};
 
 const CALLBACK_URL = 'https://tiktoklistener.onrender.com/sociabuzz/callback';
 const DEFAULT_HTML = '<div class="cyber-alert">{{mediaMarkup}}<div class="cyber-card"><div class="cyber-header"><span class="badge bell-ring">{{amount}}</span><span class="action">{{fromText}}</span><span class="user bell-ring">{{supporter}}</span></div><div class="cyber-msg">{{message}}</div></div></div>';
@@ -134,7 +155,9 @@ const SHARE_MEDIA_BRIDGE = `(() => {
 
   const showSharePlayer = () => {
     const shareUrl = getShareUrl();
-    if (!shareUrl) return;
+    const options = window.sociabuzz?.overlayOptions || {};
+    if (!shareUrl || !options.mediashareActive ||
+        (window.sociabuzz?.isNsfw === true && !options.mediashareNSFW)) return;
 
     let container = document.querySelector('.custom-media');
     if (!container) {
@@ -219,6 +242,67 @@ const SHARE_MEDIA_BRIDGE = `(() => {
   });
 })();`;
 
+const DEFAULT_OVERLAY_OPTIONS: SociaBuzzOverlayOptions = {
+  colorName: '#ff007f',
+  alphaName: 1,
+  colorNote: '#ffffff',
+  alphaNote: 1,
+  colorFrom: '#ffffff',
+  alphaFrom: 1,
+  mediashareActive: true,
+  mediashareTTS: true,
+  font: '',
+  mediashareNSFW: false,
+  customized: { name: false, note: false, from: false, font: false },
+};
+
+function parseOverlayColor(value: string | null, fallback: string): string {
+  return value && /^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(value) ? value : fallback;
+}
+
+function parseOverlayAlpha(value: string | null, fallback: number): number {
+  if (value === null || value.trim() === '') return fallback;
+  const alpha = Number(value);
+  return Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : fallback;
+}
+
+function parseOverlayToggle(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
+  return value === '1' || value.toLowerCase() === 'true';
+}
+
+function readSociaBuzzOverlayOptions(): SociaBuzzOverlayOptions {
+  if (typeof window === 'undefined') return DEFAULT_OVERLAY_OPTIONS;
+  const params = new URLSearchParams(window.location.search);
+  const font = params.get('font')?.trim() ?? '';
+  const validFont = /^[A-Za-z0-9 +_-]{1,50}:[1-9]00$/.test(font);
+  return {
+    colorName: parseOverlayColor(params.get('colorName'), DEFAULT_OVERLAY_OPTIONS.colorName),
+    alphaName: parseOverlayAlpha(params.get('alphaName'), DEFAULT_OVERLAY_OPTIONS.alphaName),
+    colorNote: parseOverlayColor(params.get('colorNote'), DEFAULT_OVERLAY_OPTIONS.colorNote),
+    alphaNote: parseOverlayAlpha(params.get('alphaNote'), DEFAULT_OVERLAY_OPTIONS.alphaNote),
+    colorFrom: parseOverlayColor(params.get('colorFrom'), DEFAULT_OVERLAY_OPTIONS.colorFrom),
+    alphaFrom: parseOverlayAlpha(params.get('alphaFrom'), DEFAULT_OVERLAY_OPTIONS.alphaFrom),
+    mediashareActive: parseOverlayToggle(params.get('mediashareActive'), DEFAULT_OVERLAY_OPTIONS.mediashareActive),
+    mediashareTTS: parseOverlayToggle(params.get('mediashareTTS'), DEFAULT_OVERLAY_OPTIONS.mediashareTTS),
+    font: validFont ? font : '',
+    mediashareNSFW: parseOverlayToggle(params.get('mediashareNSFW'), DEFAULT_OVERLAY_OPTIONS.mediashareNSFW),
+    customized: {
+      name: params.has('colorName') || params.has('alphaName'),
+      note: params.has('colorNote') || params.has('alphaNote'),
+      from: params.has('colorFrom') || params.has('alphaFrom'),
+      font: validFont,
+    },
+  };
+}
+
+function overlayColor(color: string, alpha: number): string {
+  const hex = color.slice(1);
+  const expanded = hex.length === 3 ? [...hex].map(digit => digit + digit).join('') : hex;
+  const [red, green, blue] = [0, 2, 4].map(index => Number.parseInt(expanded.slice(index, index + 2), 16));
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -243,7 +327,14 @@ function renderHtml(template: string, alert: AlertData) {
   });
 }
 
-function createDocument(html: string, css: string, javascript: string, alert: AlertData, soundUrl: string) {
+function createDocument(
+  html: string,
+  css: string,
+  javascript: string,
+  alert: AlertData,
+  soundUrl: string,
+  overlayOptions: SociaBuzzOverlayOptions,
+) {
   const safeCss = css.replace(/<\/style/gi, '<\\/style');
   const safeSoundValue = JSON.stringify(soundUrl)
     .replace(/</g, '\\u003c')
@@ -258,17 +349,34 @@ function createDocument(html: string, css: string, javascript: string, alert: Al
     message: alert.message,
     mediaUrl: alert.mediaUrl,
     shareUrl: alert.shareUrl ?? '',
+    isNsfw: alert.isNsfw === true,
     soundUrl: alert.soundUrl ?? null,
     fromText: alert.fromText ?? 'mengirim',
     sound: soundUrl,
+    overlayOptions,
     payload: alert.raw?.payload ?? null,
   })
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
+  const fontMatch = /^([A-Za-z0-9 +_-]{1,50}):([1-9]00)$/.exec(overlayOptions.font);
+  const fontFamily = fontMatch ? fontMatch[1] : '';
+  const fontWeight = fontMatch ? fontMatch[2] : '';
+  const fontLink = fontFamily
+    ? `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?${new URLSearchParams({
+        family: `${fontFamily}:wght@${fontWeight}`,
+        display: 'swap',
+      })}">`
+    : '';
+  const themeStyle = `<style>
+    ${overlayOptions.customized.name ? `.user,#sender{color:${overlayColor(overlayOptions.colorName, overlayOptions.alphaName)}!important}` : ''}
+    ${overlayOptions.customized.note ? `.cyber-msg,.message,#message{color:${overlayColor(overlayOptions.colorNote, overlayOptions.alphaNote)}!important}` : ''}
+    ${overlayOptions.customized.from ? `.action,.dari,#from{color:${overlayColor(overlayOptions.colorFrom, overlayOptions.alphaFrom)}!important}` : ''}
+    ${fontFamily ? `html,body,.cyber-alert,.cyber-card,.cyber-header,.badge,.action,.user,.cyber-msg{font-family:'${fontFamily}',sans-serif!important;font-weight:${fontWeight}!important}` : ''}
+  </style>`;
   return `<!doctype html><html><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https: data: blob:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'unsafe-inline'; connect-src 'none'; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com https://www.instagram.com; object-src 'none'; form-action 'none'; base-uri 'none'">
-    <style>${safeCss}</style></head><body>${html}
+    ${fontLink}<style>${safeCss}</style>${themeStyle}</head><body>${html}
     <script>window.sociabuzz = ${safeRawData}; window.sociabuzzData = window.sociabuzz;</script>
     <script>(() => {
       const originalPlay = HTMLMediaElement.prototype.play;
@@ -585,6 +693,7 @@ export default function SociabuzzPage() {
     processingAlertRef.current = true;
     const nextAlert = alertQueueRef.current.shift()!;
     const currentConfig = configRef.current;
+    const overlayOptions = readSociaBuzzOverlayOptions();
     const scriptHandlesSound = currentConfig.mode === 'custom' && /\{\{\s*sound\s*\}\}/.test(currentConfig.javascript);
     const scriptSoundSelected = scriptHandlesSound && currentConfig.useCustomSound && Boolean(currentConfig.customSoundUrl);
     const mediaAudioUrl = /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(nextAlert.mediaUrl)
@@ -686,7 +795,7 @@ export default function SociabuzzPage() {
         : nextAlert.fromText || 'mengirim';
       const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
       const speechPlayback = soundPlayback.then(async () => {
-        if (!speechText) return;
+        if ((nextAlert.shareUrl && !overlayOptions.mediashareTTS) || !speechText) return;
         setAudioStatus('speaking');
         setAudioStatusMessage('Membacakan notifikasi donasi...');
         try {
@@ -705,7 +814,8 @@ export default function SociabuzzPage() {
         }
       });
       const shareMediaVisibleTime = speechPlayback.then(() => {
-        if (!nextAlert.shareUrl) return Promise.resolve();
+        if (!overlayOptions.mediashareActive || !nextAlert.shareUrl ||
+            (nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW)) return Promise.resolve();
         alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:tts-finished' }, '*');
         return new Promise<void>(resolve => window.setTimeout(resolve, currentConfig.durationMs));
       });
@@ -803,6 +913,7 @@ export default function SociabuzzPage() {
           message: typeof data.message === 'string' ? data.message : '',
           mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : '',
           shareUrl: typeof data.shareUrl === 'string' ? data.shareUrl : undefined,
+          isNsfw: data.isNsfw === true,
           soundUrl: typeof data.soundUrl === 'string' ? data.soundUrl : undefined,
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
           raw: data.raw,
@@ -894,6 +1005,7 @@ export default function SociabuzzPage() {
       javascript,
       alert,
       scriptHandlesSound ? selectedSoundUrl : '',
+      readSociaBuzzOverlayOptions(),
     );
   }, [alert, config.css, config.html, config.javascript, config.mode, config.useCustomSound, config.customSoundUrl]);
 
@@ -1165,11 +1277,11 @@ export default function SociabuzzPage() {
                       onChange={(event) => setConfig((current) => ({ ...current, javascript: event.target.value }))}
                       rows={8}
                       spellCheck={false}
-                      placeholder={'// Data tersedia di window.sociabuzz, termasuk shareUrl dan payload.\nconst { amount, supporter, message, shareUrl, payload } = window.sociabuzz;\n\n// {{sound}} menjadi URL suara custom atau "" jika suara tidak dipilih.\nconst soundUrl = {{sound}};\nif (soundUrl) new Audio(soundUrl).play().catch(console.error);\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
+                      placeholder={'// Data tersedia di window.sociabuzz, termasuk shareUrl, overlayOptions, dan payload.\nconst { amount, supporter, message, shareUrl, payload, overlayOptions } = window.sociabuzz;\n\n// {{sound}} menjadi URL suara custom atau "" jika suara tidak dipilih.\nconst soundUrl = {{sound}};\nif (soundUrl) new Audio(soundUrl).play().catch(console.error);\n\nconst amountEl = document.querySelector("#amount");\nif (amountEl) amountEl.textContent = String(amount ?? "");'}
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code>; player YouTube, TikTok, atau Instagram akan otomatis menggantikan <code>.custom-media</code> setelah TTS selesai. URL payload yang dikenali juga tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
+                      Data media yang dibagikan tersedia di <code>window.sociabuzz.shareUrl</code>; player YouTube, TikTok, atau Instagram akan otomatis menggantikan <code>.custom-media</code> setelah TTS selesai. URL payload yang dikenali juga tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>overlayOptions</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. Parameter MediaShare dari query URL dapat mengatur warna, opacity, font, TTS, embed, dan izin konten bertanda NSFW. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>

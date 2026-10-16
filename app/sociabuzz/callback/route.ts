@@ -31,6 +31,7 @@ const CUSTOM_PAYLOAD_KEYS = new Set([
   'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
   'soundFile', 'audio_file', 'audioFile', 'alert_audio', 'alertAudio',
   'alert_sound_url', 'alertSoundUrl', 'notification_audio', 'notificationAudio',
+  'nsfw', 'is_nsfw', 'isNsfw', 'media_nsfw', 'mediaNsfw',
 ]);
 
 function selectCustomPayload(value: unknown): unknown {
@@ -116,6 +117,18 @@ function firstValue(objects: JsonObject[], keys: string[]): unknown {
     for (const key of keys) {
       const value = object[key];
       if (typeof value === 'string' || typeof value === 'number') return value;
+    }
+  }
+  return undefined;
+}
+
+function firstBoolean(objects: JsonObject[], keys: string[]): boolean | undefined {
+  for (const object of objects) {
+    for (const key of keys) {
+      const value = object[key];
+      if (typeof value === 'boolean') return value;
+      if (value === 1 || value === '1' || (typeof value === 'string' && value.toLowerCase() === 'true')) return true;
+      if (value === 0 || value === '0' || (typeof value === 'string' && value.toLowerCase() === 'false')) return false;
     }
   }
   return undefined;
@@ -374,6 +387,7 @@ export async function POST(req: Request) {
       'mengirim',
       80,
     );
+    const isNsfw = firstBoolean(objects, ['is_nsfw', 'isNsfw', 'media_nsfw', 'mediaNsfw', 'nsfw']);
 
     const receivedAt = new Date().toISOString();
     const logEntry = {
@@ -381,7 +395,7 @@ export async function POST(req: Request) {
       receivedAt,
       eventType: valueAsString(firstValue(objects, ['event_type', 'eventType', 'type', 'action']), 'donation', 80),
       payloadFields: summarizePayload(parsedBody),
-      mapped: { amount: formattedAmount, supporter, message, mediaUrl, shareUrl, soundUrl, fromText },
+      mapped: { amount: formattedAmount, supporter, message, mediaUrl, shareUrl, soundUrl, fromText, isNsfw },
     };
     const existingLogs: unknown = getSetting(WEBHOOK_LOGS_KEY, []);
     const logs = Array.isArray(existingLogs) ? existingLogs : [];
@@ -393,6 +407,7 @@ export async function POST(req: Request) {
       message: firstValue(objects, ['note', 'message', 'comment', 'supporter_message', 'supporterMessage']) ?? null,
       mediaUrl: firstValue(objects, ['gif_link', 'gifLink', 'mediaUrl', 'media_url', 'media', 'image_url', 'imageUrl']) ?? null,
       shareUrl: shareUrl || null,
+      isNsfw: isNsfw ?? null,
       soundUrl: soundUrl || null,
       fromText: firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']) ?? null,
       payload: selectCustomPayload(parsedBody),
@@ -405,6 +420,7 @@ export async function POST(req: Request) {
         message,
         mediaUrl,
         shareUrl,
+        isNsfw,
         soundUrl,
         fromText,
         raw: rawAlert,

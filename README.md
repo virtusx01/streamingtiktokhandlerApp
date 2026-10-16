@@ -26,6 +26,20 @@ autoplay restrictions. Platform privacy settings, embed permissions, or browser
 policies can still prevent playback; the original post link remains available
 in the alert as a fallback.
 
+The `/sociabuzz` overlay accepts MediaShare-style query parameters for colors,
+opacity, font, embed, and share-alert TTS. For example:
+
+```text
+/sociabuzz?colorName=%2300ff00&alphaName=1&colorNote=%23ffff00&alphaNote=1&colorFrom=%23eeeeee&alphaFrom=1&mediashareActive=1&mediashareTTS=1&font=Open%2BSans%3A800&mediashareNSFW=0
+```
+
+Color values must be 3- or 6-digit hex colors; opacity is clamped to `0–1`.
+`mediashareActive=0` disables shared-media embeds, and `mediashareTTS=0`
+disables TTS for alerts containing shared media while preserving TTS for other
+donations. `mediashareNSFW=0` blocks media only when the webhook explicitly
+marks that event as NSFW; the overlay does not attempt to classify media
+content.
+
 ## Render TikTok Listener with Local USB ADB
 
 The TikTok listener and event processing can run on Render while a small agent on
