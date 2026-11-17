@@ -258,8 +258,8 @@ function SociaBuzzShareEmbed({
         console.error('[SociaBuzz] Shared video autoplay failed:', error);
       });
     }
-    else if (overlay.playing && !isTikTokPlayer) onStarted();
-  }, [isTikTokPlayer, onStarted, overlay.playing]);
+    else if (overlay.playing && !isTikTokPlayer && !isYouTubePlayer) onStarted();
+  }, [isTikTokPlayer, isYouTubePlayer, onStarted, overlay.playing]);
 
   useEffect(() => {
     if (!isTikTokPlayer || !overlay.playing) return;
@@ -312,6 +312,8 @@ function SociaBuzzShareEmbed({
         }
       }
       if (!data || typeof data !== 'object') return;
+      if (data.event === 'onStateChange' && data.info === 1) onStarted();
+      if (data.event === 'infoDelivery' && data.info?.playerState === 1) onStarted();
       if (data.event === 'onStateChange' && data.info === 0) onEnded();
       if (data.event === 'infoDelivery' && data.info?.playerState === 0) onEnded();
       if (data.event === 'onError') onUnavailable();
@@ -324,7 +326,7 @@ function SociaBuzzShareEmbed({
       );
     }
     return () => window.removeEventListener('message', handleYouTubePlayerMessage);
-  }, [frameLoadVersion, isYouTubePlayer, onEnded, onUnavailable, overlay.playing]);
+  }, [frameLoadVersion, isYouTubePlayer, onEnded, onStarted, onUnavailable, overlay.playing]);
 
   const directVideoUrl = normalizeDirectVideoUrl(overlay.url);
   if (directVideoUrl) {
@@ -485,8 +487,11 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
   const getMediaSlot = () => document.querySelector('.custom-media');
   const applyMediaSlotSize = (slot, mediaShare) => {
     const data = window.sociabuzz || {};
-    const width = mediaShare ? data.mediaShareWidth : data.customMediaWidth;
-    const height = mediaShare ? data.mediaShareHeight : data.customMediaHeight;
+    let width = mediaShare ? data.mediaShareWidth : data.customMediaWidth;
+    let height = mediaShare ? data.mediaShareHeight : data.customMediaHeight;
+    if (mediaShare && Number.isInteger(width) && Number.isInteger(height) && height > width) {
+      [width, height] = [height, width];
+    }
     if (Number.isInteger(width) && width >= 120 && width <= 1920) {
       slot.style.setProperty('width', width + 'px', 'important');
     }
@@ -818,41 +823,60 @@ function createDocument(
     <script>(() => {
       const originalPlay = HTMLMediaElement.prototype.play;
       const trackedAudios = new Set();
+      const queuedAudioPlays = [];
       let soundStopped = false;
+      let soundPlaybackEnabled = false;
       let soundSequence = 0;
-      HTMLMediaElement.prototype.play = function(...args) {
-        if (!(this instanceof HTMLAudioElement)) return originalPlay.apply(this, args);
+      const playTrackedAudio = (audio, args) => {
         if (soundStopped) return Promise.reject(new DOMException('Donation sound fallback started.', 'AbortError'));
-        trackedAudios.add(this);
+        trackedAudios.add(audio);
         const soundId = Date.now().toString() + '-' + (++soundSequence);
         window.parent.postMessage({ type: 'sociabuzz:sound-start', soundId }, '*');
         let settled = false;
         const finish = (played) => {
           if (settled) return;
           settled = true;
-          trackedAudios.delete(this);
+          trackedAudios.delete(audio);
           window.parent.postMessage({ type: 'sociabuzz:sound-end', soundId, played }, '*');
         };
         let playback;
         try {
-          playback = originalPlay.apply(this, args);
+          playback = originalPlay.apply(audio, args);
         } catch (error) {
           finish(false);
           throw error;
         }
-        this.addEventListener('ended', () => finish(true), { once: true });
-        this.addEventListener('error', () => finish(false), { once: true });
-        this.addEventListener('pause', () => finish(false), { once: true });
+        audio.addEventListener('ended', () => finish(true), { once: true });
+        audio.addEventListener('error', () => finish(false), { once: true });
+        audio.addEventListener('pause', () => finish(false), { once: true });
         playback.then(
           () => window.parent.postMessage({ type: 'sociabuzz:sound-ready', soundId }, '*'),
           () => finish(false)
         );
         return playback;
       };
+      HTMLMediaElement.prototype.play = function(...args) {
+        if (!(this instanceof HTMLAudioElement)) return originalPlay.apply(this, args);
+        if (soundStopped) return Promise.reject(new DOMException('Donation sound fallback started.', 'AbortError'));
+        if (soundPlaybackEnabled) return playTrackedAudio(this, args);
+        return new Promise((resolve, reject) => {
+          queuedAudioPlays.push({ audio: this, args, resolve, reject });
+        });
+      };
       window.addEventListener('message', event => {
-        if (event.source !== window.parent || event.data?.type !== 'sociabuzz:sound-stop') return;
-        soundStopped = true;
-        trackedAudios.forEach(audio => audio.pause());
+        if (event.source !== window.parent) return;
+        if (event.data?.type === 'sociabuzz:sound-play') {
+          soundPlaybackEnabled = true;
+          queuedAudioPlays.splice(0).forEach(({ audio, args, resolve, reject }) => {
+            playTrackedAudio(audio, args).then(resolve, reject);
+          });
+        } else if (event.data?.type === 'sociabuzz:sound-stop') {
+          soundStopped = true;
+          queuedAudioPlays.splice(0).forEach(({ reject }) => {
+            reject(new DOMException('Donation sound stopped.', 'AbortError'));
+          });
+          trackedAudios.forEach(audio => audio.pause());
+        }
       });
     })();</script>
     <script>${safeJavascript}</script>
@@ -1276,7 +1300,7 @@ export default function SociabuzzPage() {
       : currentConfig.useCustomSound
         ? currentConfig.customSoundUrl
         : nextAlert.soundUrl || mediaAudioUrl;
-    const scriptSoundPlayback = scriptSoundSelected
+    const startScriptSoundPlayback = () => scriptSoundSelected
       ? new Promise<boolean>(resolve => {
           const finish = (played: boolean) => {
             const tracker = scriptSoundTrackerRef.current;
@@ -1324,55 +1348,11 @@ export default function SociabuzzPage() {
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
-    let soundPlayback: Promise<void>;
-    if (soundUrl) {
-      soundPlayback = preparedAudioPromise.then(async preparedAudio => {
-        if (!preparedAudio) {
-          soundFailed = !(await playFallbackDonationSound());
-          return;
-        }
-        setAudioStatus('ready');
-        setAudioStatusMessage('Suara siap — notifikasi sedang tampil');
-        const playedToEnd = await playPreparedAudio(preparedAudio);
-        if (!playedToEnd) soundFailed = !(await playFallbackDonationSound());
-      });
-    } else if (scriptSoundSelected) {
-      setAudioStatus('checking');
-      setAudioStatusMessage('Memuat suara custom dari JavaScript...');
-      soundPlayback = scriptSoundPlayback.then(async played => {
-        if (!played) soundFailed = !(await playFallbackDonationSound());
-      });
-    } else if (!currentConfig.useCustomSound && !scriptHandlesSound) {
-      setAudioStatus('playing');
-      setAudioStatusMessage('Suara donasi sedang diputar');
-      setAudioProgress(0);
-      soundPlayback = playDefaultAlertSound()
-        .then(() => {
-          soundFailed = false;
-        })
-        .catch((audioError: unknown) => {
-          console.error('[SociaBuzz] Default donation sound failed:', audioError);
-          soundFailed = true;
-          setAudioStatus('error');
-          setAudioStatusMessage('Audio gagal diputar — klik ikon audio untuk mencoba lagi');
-        })
-        .finally(() => setAudioProgress(null));
-    } else {
-      soundPlayback = currentConfig.useCustomSound
-        ? playFallbackDonationSound().then(fallbackPlayed => {
-            soundFailed = !fallbackPlayed;
-          })
-        : Promise.resolve();
-    }
-
-    let resolveMinimumVisibleTime: (() => void) | null = null;
     try {
       const minimumVisibleTime = new Promise<void>(resolve => {
-        resolveMinimumVisibleTime = resolve;
         alertTimerRef.current = window.setTimeout(() => {
           alertTimerRef.current = null;
           resolve();
-          resolveMinimumVisibleTime = null;
         }, currentConfig.durationMs);
       });
       const template = currentConfig.mode === 'custom' ? currentConfig.html : DEFAULT_HTML;
@@ -1381,7 +1361,54 @@ export default function SociabuzzPage() {
         ? actionHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').trim()
         : nextAlert.fromText || 'mengirim';
       const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
-      const speechPlayback = soundPlayback.then(async () => {
+      const playNotification = async () => {
+        let soundPlayback: Promise<void>;
+        if (soundUrl) {
+          alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-play' }, '*');
+          soundPlayback = preparedAudioPromise.then(async preparedAudio => {
+            if (!preparedAudio) {
+              soundFailed = !(await playFallbackDonationSound());
+              return;
+            }
+            setAudioStatus('ready');
+            setAudioStatusMessage('Suara siap — notifikasi sedang tampil');
+            const playedToEnd = await playPreparedAudio(preparedAudio);
+            if (!playedToEnd) soundFailed = !(await playFallbackDonationSound());
+          });
+        } else if (scriptSoundSelected) {
+          setAudioStatus('checking');
+          setAudioStatusMessage('Memuat suara custom dari JavaScript...');
+          const scriptSoundPlayback = startScriptSoundPlayback();
+          alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-play' }, '*');
+          soundPlayback = scriptSoundPlayback.then(async played => {
+            if (!played) soundFailed = !(await playFallbackDonationSound());
+          });
+        } else if (!currentConfig.useCustomSound && !scriptHandlesSound) {
+          alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-play' }, '*');
+          setAudioStatus('playing');
+          setAudioStatusMessage('Suara donasi sedang diputar');
+          setAudioProgress(0);
+          soundPlayback = playDefaultAlertSound()
+            .then(() => {
+              soundFailed = false;
+            })
+            .catch((audioError: unknown) => {
+              console.error('[SociaBuzz] Default donation sound failed:', audioError);
+              soundFailed = true;
+              setAudioStatus('error');
+              setAudioStatusMessage('Audio gagal diputar — klik ikon audio untuk mencoba lagi');
+            })
+            .finally(() => setAudioProgress(null));
+        } else {
+          alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-play' }, '*');
+          soundPlayback = currentConfig.useCustomSound
+            ? playFallbackDonationSound().then(fallbackPlayed => {
+                soundFailed = !fallbackPlayed;
+              })
+            : Promise.resolve();
+        }
+
+        await soundPlayback;
         if ((normalizedInitialShareUrl && !overlayOptions.mediashareTTS) || !speechText) return;
         setAudioStatus('speaking');
         setAudioStatusMessage('Membacakan notifikasi donasi...');
@@ -1399,7 +1426,7 @@ export default function SociabuzzPage() {
           setAudioStatus('error');
           setAudioStatusMessage('TTS gagal — periksa izin suara browser');
         }
-      });
+      };
       const shareMediaVisibleTime = (async () => {
         if (!overlayOptions.mediashareActive ||
             (nextAlert.isNsfw === true && !overlayOptions.mediashareNSFW)) return Promise.resolve();
@@ -1423,7 +1450,6 @@ export default function SociabuzzPage() {
           type: 'sociabuzz:share-player-prepare',
           ...playerMessage,
         }, '*');
-        await speechPlayback;
         return new Promise<void>(resolve => {
           const timers: { startup?: number; duration?: number } = {};
           let settled = false;
@@ -1434,16 +1460,8 @@ export default function SociabuzzPage() {
             if (timers.startup !== undefined) window.clearTimeout(timers.startup);
             if (sharePlaybackStartedRef.current === beginPlaybackWindow) sharePlaybackStartedRef.current = null;
             if (sharePlaybackEndedRef.current === finish) sharePlaybackEndedRef.current = null;
-            if (alertTimerRef.current !== null) {
-              window.clearTimeout(alertTimerRef.current);
-              alertTimerRef.current = null;
-            }
-            resolveMinimumVisibleTime?.();
-            resolveMinimumVisibleTime = null;
-            alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:alert-hide' }, '*');
             setSharePlayerOverlay(null);
-            setVisible(false);
-            window.setTimeout(resolve, 300);
+            resolve();
           };
           const beginPlaybackWindow = () => {
             if (settled || timers.duration !== undefined) return;
@@ -1459,7 +1477,7 @@ export default function SociabuzzPage() {
           }, '*');
         });
       })();
-      await Promise.all([speechPlayback, minimumVisibleTime, shareMediaVisibleTime]);
+      await Promise.all([minimumVisibleTime, shareMediaVisibleTime.then(playNotification)]);
     } catch (queueError) {
       soundFailed = true;
       console.error('[SociaBuzz] Alert playback failed:', queueError);
@@ -1998,7 +2016,7 @@ export default function SociabuzzPage() {
                       className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 font-mono text-xs leading-5 text-amber-100 outline-none focus:border-violet-400"
                     />
                     <p className="mt-2 text-xs leading-5 text-amber-200/80">
-                      Media share YouTube, TikTok, atau Instagram akan menggantikan isi slot <code>.custom-media</code> setelah TTS selesai; jika tidak ada media share, slot menampilkan URL media default. Posisi dan ukuran slot sepenuhnya diatur HTML/CSS kustom (template default berukuran 220×180 px). Gunakan satu <code>.custom-media</code> di dalam <code>.cyber-alert</code>, sebelum <code>.cyber-card</code>. Placeholder <code>{'{amount}'}</code>, <code>{'{from_text}'}</code>, <code>{'{supporter}'}</code>, dan <code>{'{message}'}</code> maupun format lama dua kurung kurawal tetap didukung. URL payload tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>overlayOptions</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. Parameter MediaShare dari query URL dapat mengatur warna, opacity, font, TTS, embed, dan izin konten bertanda NSFW. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
+                      Media share YouTube, TikTok, atau Instagram akan diputar lebih dulu di slot <code>.custom-media</code> sesuai durasi yang tersedia; setelah media selesai, suara notifikasi lalu TTS diputar. Dimensi slot MediaShare otomatis dibuat landscape. Jika tidak ada media share, slot menampilkan URL media default. Posisi dan ukuran slot mengikuti HTML/CSS kustom dan pengaturan ukuran media. Gunakan satu <code>.custom-media</code> di dalam <code>.cyber-alert</code>, sebelum <code>.cyber-card</code>. Placeholder <code>{'{amount}'}</code>, <code>{'{from_text}'}</code>, <code>{'{supporter}'}</code>, dan <code>{'{message}'}</code> maupun format lama dua kurung kurawal tetap didukung. URL payload tersedia di <code>window.sociabuzz.payload</code>. <code>{'{{sound}}'}</code> menjadi URL suara custom jika toggle suara aktif dan file dipilih, atau string kosong jika tidak ada. Saat token ini dipakai, suara diserahkan ke JavaScript agar tidak diputar dua kali. Data <code>window.sociabuzz</code> mencakup <code>amount</code>, <code>supporter</code>, <code>message</code>, <code>shareUrl</code>, <code>overlayOptions</code>, <code>sound</code>, dan <code>payload</code> tanpa field token/kontak. Parameter MediaShare dari query URL dapat mengatur warna, opacity, font, TTS, embed, dan izin konten bertanda NSFW. JavaScript berjalan di iframe sandbox; jalankan hanya kode yang kamu percaya.
                     </p>
                   </div>
                 </div>
@@ -2248,7 +2266,7 @@ export default function SociabuzzPage() {
               <section className="rounded-xl border border-violet-400/20 bg-slate-900/70 p-4">
                 <h2 className="text-sm font-semibold">Ukuran `.custom-media` — MediaShare</h2>
                 <p className="mb-3 mt-1 text-xs leading-5 text-slate-400">
-                  Berlaku khusus saat MediaShare diterima. Player akan mengisi slot ini dan tetap berada di dalam batasnya.
+                  Berlaku khusus saat MediaShare diterima. Player mengisi slot ini; jika tinggi lebih besar dari lebar, ukuran otomatis ditukar agar landscape.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label htmlFor="sociabuzz-media-share-width" className="text-xs text-slate-300">

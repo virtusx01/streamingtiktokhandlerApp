@@ -20,9 +20,10 @@ See the [ResponsiveVoice REST API](https://docs.responsivevoice.org/rest-api/)
 and [TypeScript SDK documentation](https://docs.responsivevoice.org/sdks/typescript/).
 
 When a SociaBuzz webhook contains a shared YouTube, TikTok, or Instagram URL,
-the player is shown immediately inside the existing `.custom-media` slot,
-paused and muted while the alert is being read. It starts playing with audio
-after TTS finishes. The player exactly follows the slot's position and
+the player starts automatically inside the existing `.custom-media` slot and
+plays for the donation-funded duration before the notification sound and TTS
+run. The MediaShare slot is normalized to landscape when configured with a
+portrait shape. The player exactly follows the slot's position and
 dimensions, so it does not overlap the content below. The admin settings
 provide separate width and height controls for ordinary alerts and MediaShare;
 MediaShare dimensions only apply when a shared URL is present. The third-party
