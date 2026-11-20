@@ -181,6 +181,7 @@ function isSupportedShareUrl(value: string): boolean {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return false;
+    if (/\.(?:mp4|webm|m4v|mov)$/i.test(url.pathname)) return true;
     const hostname = url.hostname.toLowerCase();
     return hostname === 'youtu.be' ||
       hostname === 'youtube.com' ||
@@ -393,14 +394,17 @@ export async function POST(req: Request) {
     );
     const mediaUrlIsShare = isSupportedShareUrl(mediaUrlCandidate);
     const mediaUrl = mediaUrlIsShare ? '' : mediaUrlCandidate;
-    const shareUrl = firstSocialShareUrl(objects, message) ||
-      (mediaUrlIsShare ? new URL(mediaUrlCandidate).toString() : '');
-    const soundUrl = firstHttpsUrl(objects, [
+    const soundUrlCandidate = firstHttpsUrl(objects, [
       'sound_url', 'soundUrl', 'audio_url', 'audioUrl', 'alert_sound', 'alertSound',
       'notification_sound', 'notificationSound', 'sound', 'audio', 'sound_file',
       'soundFile', 'audio_file', 'audioFile', 'alert_audio', 'alertAudio',
       'alert_sound_url', 'alertSoundUrl', 'notification_audio', 'notificationAudio',
     ]);
+    const soundUrlIsShare = isSupportedShareUrl(soundUrlCandidate);
+    const shareUrl = firstSocialShareUrl(objects, message) ||
+      (mediaUrlIsShare ? new URL(mediaUrlCandidate).toString() : '') ||
+      (soundUrlIsShare ? new URL(soundUrlCandidate).toString() : '');
+    const soundUrl = soundUrlIsShare ? '' : soundUrlCandidate;
     const fromText = valueAsString(
       firstValue(objects, ['from_label', 'fromText', 'from_text', 'from_label_text']),
       'mengirim',

@@ -45,10 +45,16 @@ export async function GET() {
   const config = getSetting(CONFIG_KEY, {});
   const safeConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
   const savedCustomSoundUrl = typeof safeConfig.customSoundUrl === 'string' ? safeConfig.customSoundUrl : '';
+  const savedMediaShareSoundUrl = typeof safeConfig.mediaShareSoundUrl === 'string' ? safeConfig.mediaShareSoundUrl : '';
   const customSoundUrl = savedCustomSoundUrl.startsWith('/uploads/')
     ? `/api${savedCustomSoundUrl}`
     : savedCustomSoundUrl.length <= 2048
       ? savedCustomSoundUrl
+      : '';
+  const mediaShareSoundUrl = savedMediaShareSoundUrl.startsWith('/uploads/')
+    ? `/api${savedMediaShareSoundUrl}`
+    : savedMediaShareSoundUrl.length <= 2048
+      ? savedMediaShareSoundUrl
       : '';
   return NextResponse.json({
     mode: safeConfig.mode === 'custom' ? 'custom' : 'default',
@@ -60,6 +66,7 @@ export async function GET() {
       : 8000,
     useCustomSound: safeConfig.useCustomSound === true,
     customSoundUrl,
+    mediaShareSoundUrl,
     defaultMediaUrl: isValidDefaultMediaUrl(safeConfig.defaultMediaUrl) ? safeConfig.defaultMediaUrl : '',
     customMediaWidth: Number.isInteger(safeConfig.customMediaWidth) &&
       safeConfig.customMediaWidth >= 120 && safeConfig.customMediaWidth <= 1920
@@ -113,6 +120,7 @@ export async function POST(req: Request) {
       durationMs,
       useCustomSound = false,
       customSoundUrl = '',
+      mediaShareSoundUrl = '',
       defaultMediaUrl = '',
       customMediaWidth = 220,
       customMediaHeight = 180,
@@ -150,6 +158,16 @@ export async function POST(req: Request) {
       ))
     ) {
       return NextResponse.json({ error: 'URL suara harus berupa file unggahan atau URL HTTPS yang valid.' }, { status: 400 });
+    }
+    if (
+      typeof mediaShareSoundUrl !== 'string' ||
+      mediaShareSoundUrl.length > 2048 ||
+      (mediaShareSoundUrl !== '' && !(
+        /^\/api\/uploads\/[A-Za-z0-9._-]+$/.test(mediaShareSoundUrl) ||
+        /^https:\/\/[^\s]+$/i.test(mediaShareSoundUrl)
+      ))
+    ) {
+      return NextResponse.json({ error: 'URL suara MediaShare harus berupa file unggahan atau URL HTTPS yang valid.' }, { status: 400 });
     }
     if (useCustomSound && !customSoundUrl) {
       return NextResponse.json({ error: 'Pilih file suara custom sebelum mengaktifkannya.' }, { status: 400 });
@@ -195,6 +213,7 @@ export async function POST(req: Request) {
       durationMs,
       useCustomSound,
       customSoundUrl,
+      mediaShareSoundUrl,
       defaultMediaUrl,
       customMediaWidth,
       customMediaHeight,

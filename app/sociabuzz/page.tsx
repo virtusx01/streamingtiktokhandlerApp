@@ -13,6 +13,7 @@ type AlertConfig = {
   durationMs: number;
   useCustomSound: boolean;
   customSoundUrl: string;
+  mediaShareSoundUrl: string;
   defaultMediaUrl: string;
   customMediaWidth: number;
   customMediaHeight: number;
@@ -109,7 +110,10 @@ function normalizeSupportedShareUrl(value: string): string | null {
   const candidates = value.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [value.trim()];
   for (const candidate of candidates) {
     try {
-      const url = new URL(candidate.replace(/&amp;/gi, '&').replace(/[.,;!?]+$/, ''));
+      const normalizedCandidate = candidate.replace(/&amp;/gi, '&').replace(/[.,;!?]+$/, '');
+      const directVideoUrl = normalizeDirectVideoUrl(normalizedCandidate);
+      if (directVideoUrl) return directVideoUrl;
+      const url = new URL(normalizedCandidate);
       const host = url.hostname.toLowerCase();
       const supportedHost = host === 'youtu.be' ||
         host === 'youtube.com' || host.endsWith('.youtube.com') ||
@@ -181,7 +185,7 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = fa
       controls: '1',
       enablejsapi: '1',
       loop: '0',
-      mute: playing ? '0' : '1',
+      mute: '1',
       playsinline: '1',
       rel: '0',
       origin: window.location.origin,
@@ -198,7 +202,7 @@ function getSharePlayerEmbedUrl(shareUrl: string, startSeconds = 0, playing = fa
     if (!/^\d+$/.test(videoId)) return null;
     const params = new URLSearchParams({
       autoplay: playing ? '1' : '0',
-      muted: playing ? '0' : '1',
+      force_muted: '0',
       loop: '0',
       controls: '1',
     });
@@ -277,13 +281,17 @@ function SociaBuzzShareEmbed({
 
       if (event.data.type === 'onPlayerReady') {
         const player = frameRef.current?.contentWindow;
-        player?.postMessage({ type: 'unMute', 'x-tiktok-player': true }, 'https://www.tiktok.com');
         player?.postMessage({ type: 'play', 'x-tiktok-player': true }, 'https://www.tiktok.com');
       } else if (event.data.type === 'onStateChange' && event.data.value === 1) {
+        frameRef.current?.contentWindow?.postMessage(
+          { type: 'unMute', 'x-tiktok-player': true },
+          'https://www.tiktok.com',
+        );
         onStarted();
       } else if (event.data.type === 'onStateChange' && event.data.value === 0) {
         onEnded();
       } else if (event.data.type === 'onPlayerError') {
+        console.error('[SociaBuzz] TikTok player reported an error:', event.data.errorCode, event.data.errorType);
         onUnavailable();
       }
     };
@@ -312,17 +320,32 @@ function SociaBuzzShareEmbed({
         }
       }
       if (!data || typeof data !== 'object') return;
-      if (data.event === 'onStateChange' && data.info === 1) onStarted();
-      if (data.event === 'infoDelivery' && data.info?.playerState === 1) onStarted();
+      if ((data.event === 'onStateChange' && data.info === 1) ||
+          (data.event === 'infoDelivery' && data.info?.playerState === 1)) {
+        frameRef.current?.contentWindow?.postMessage(
+          JSON.stringify({ event: 'command', func: 'unMute', args: [] }),
+          'https://www.youtube.com',
+        );
+        onStarted();
+      }
       if (data.event === 'onStateChange' && data.info === 0) onEnded();
       if (data.event === 'infoDelivery' && data.info?.playerState === 0) onEnded();
-      if (data.event === 'onError') onUnavailable();
+      if (data.event === 'onError') {
+        console.error('[SociaBuzz] YouTube player reported an error:', data.info);
+        onUnavailable();
+      }
     };
     window.addEventListener('message', handleYouTubePlayerMessage);
     if (frameLoadVersion > 0) {
-      frameRef.current?.contentWindow?.postMessage(
+      const player = frameRef.current?.contentWindow;
+      const targetOrigin = 'https://www.youtube.com';
+      player?.postMessage(
         JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }),
-        'https://www.youtube.com',
+        targetOrigin,
+      );
+      player?.postMessage(
+        JSON.stringify({ event: 'command', func: 'getPlayerState', args: [] }),
+        targetOrigin,
       );
     }
     return () => window.removeEventListener('message', handleYouTubePlayerMessage);
@@ -336,11 +359,14 @@ function SociaBuzzShareEmbed({
         src={directVideoUrl}
         title="Media yang dibagikan"
         autoPlay={overlay.playing}
-        muted={!overlay.playing}
+        muted
         playsInline
         controls
         style={{ ...style, objectFit: 'contain' }}
-        onPlaying={onStarted}
+        onPlaying={() => {
+          if (videoRef.current) videoRef.current.muted = false;
+          onStarted();
+        }}
         onEnded={onEnded}
         onError={onUnavailable}
       />
@@ -446,6 +472,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       const url = new URL(value);
       const host = url.hostname.toLowerCase();
       return url.protocol === 'https:' && (
+        /\.(mp4|webm|m4v|mov)$/i.test(url.pathname) ||
         host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com') ||
         host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com') ||
         host === 'tiktok.com' || host.endsWith('.tiktok.com') ||
@@ -460,6 +487,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     const data = window.sociabuzz || {};
     if (isSocialUrl(data.shareUrl)) return data.shareUrl;
     if (isSocialUrl(data.mediaUrl)) return data.mediaUrl;
+    if (isSocialUrl(data.soundUrl)) return data.soundUrl;
     const findShareUrl = (value, depth = 0) => {
       if (!value || depth > 6) return '';
       if (typeof value === 'string') {
@@ -892,6 +920,7 @@ export default function SociabuzzPage() {
     durationMs: 8000,
     useCustomSound: false,
     customSoundUrl: '',
+    mediaShareSoundUrl: '',
     defaultMediaUrl: '',
     customMediaWidth: 220,
     customMediaHeight: 180,
@@ -935,6 +964,7 @@ export default function SociabuzzPage() {
   const pendingSociaBuzzSharesRef = useRef<SociaBuzzShareCandidate[]>([]);
   const shareMediaWaiterRef = useRef<((candidate: SociaBuzzShareCandidate) => boolean) | null>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
+  const mediaShareSoundInputRef = useRef<HTMLInputElement>(null);
   const configRef = useRef(config);
   const audioUnlockedRef = useRef(false);
   const alertQueueRef = useRef<AlertData[]>([]);
@@ -1292,14 +1322,28 @@ export default function SociabuzzPage() {
     const overlayOptions = readSociaBuzzOverlayOptions();
     const scriptHandlesSound = currentConfig.mode === 'custom' && /\{\{\s*sound\s*\}\}/.test(currentConfig.javascript);
     const scriptSoundSelected = scriptHandlesSound && currentConfig.useCustomSound && Boolean(currentConfig.customSoundUrl);
+    const initialShareUrl = nextAlert.shareUrl || findSupportedShareUrl(nextAlert.raw);
+    const normalizedInitialShareUrl = initialShareUrl
+      ? normalizeSupportedShareUrl(initialShareUrl)
+      : null;
+    const shareCandidatePromise = normalizedInitialShareUrl
+      ? Promise.resolve({ shareUrl: normalizedInitialShareUrl, startSeconds: 0 })
+      : overlayOptions.mediashareActive
+        ? waitForSociaBuzzShare(nextAlert)
+        : Promise.resolve(null);
     const mediaAudioUrl = /\.(mp3|wav|ogg|m4a|aac|mp4|webm|m4v|mov)(?:$|[?#])/i.test(nextAlert.mediaUrl)
       ? nextAlert.mediaUrl
       : undefined;
-    const soundUrl = scriptHandlesSound
+    const regularSoundUrl = scriptHandlesSound
       ? undefined
       : currentConfig.useCustomSound
         ? currentConfig.customSoundUrl
         : nextAlert.soundUrl || mediaAudioUrl;
+    const soundUrlPromise = shareCandidatePromise.then(candidate =>
+      candidate && !scriptHandlesSound && currentConfig.mediaShareSoundUrl
+        ? currentConfig.mediaShareSoundUrl
+        : regularSoundUrl,
+    );
     const startScriptSoundPlayback = () => scriptSoundSelected
       ? new Promise<boolean>(resolve => {
           const finish = (played: boolean) => {
@@ -1325,25 +1369,16 @@ export default function SociabuzzPage() {
           };
         })
       : Promise.resolve(true);
-    const preparedAudioPromise = soundUrl
+    const preparedAudioPromise = soundUrlPromise.then(soundUrl => soundUrl
       ? prepareAlertAudio(soundUrl).then(audio => audio).catch(audioError => {
           console.error('[SociaBuzz] Donation sound could not be prepared:', audioError);
           setAudioStatus('error');
           setAudioStatusMessage(audioError instanceof Error ? audioError.message : 'File suara gagal dimuat');
           return null;
         })
-      : Promise.resolve(null);
+      : null);
     let soundFailed = false;
 
-    const initialShareUrl = nextAlert.shareUrl || findSupportedShareUrl(nextAlert.raw);
-    const normalizedInitialShareUrl = initialShareUrl
-      ? normalizeSupportedShareUrl(initialShareUrl)
-      : null;
-    const shareCandidatePromise = normalizedInitialShareUrl
-      ? Promise.resolve({ shareUrl: normalizedInitialShareUrl, startSeconds: 0 })
-      : overlayOptions.mediashareActive
-        ? waitForSociaBuzzShare(nextAlert)
-        : Promise.resolve(null);
     setAlert(nextAlert);
     setVisible(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -1362,6 +1397,7 @@ export default function SociabuzzPage() {
         : nextAlert.fromText || 'mengirim';
       const speechText = buildSociaBuzzSpeechText(nextAlert.amount, actionText, nextAlert.supporter, nextAlert.message);
       const playNotification = async () => {
+        const soundUrl = await soundUrlPromise;
         let soundPlayback: Promise<void>;
         if (soundUrl) {
           alertFrameRef.current?.contentWindow?.postMessage({ type: 'sociabuzz:sound-play' }, '*');
@@ -1409,7 +1445,8 @@ export default function SociabuzzPage() {
         }
 
         await soundPlayback;
-        if ((normalizedInitialShareUrl && !overlayOptions.mediashareTTS) || !speechText) return;
+        const shareCandidate = await shareCandidatePromise;
+        if ((shareCandidate && !overlayOptions.mediashareTTS) || !speechText) return;
         setAudioStatus('speaking');
         setAudioStatusMessage('Membacakan notifikasi donasi...');
         try {
@@ -1470,7 +1507,10 @@ export default function SociabuzzPage() {
           };
           sharePlaybackStartedRef.current = beginPlaybackWindow;
           sharePlaybackEndedRef.current = finish;
-          timers.startup = window.setTimeout(finish, 20000);
+          timers.startup = window.setTimeout(() => {
+            console.warn('[SociaBuzz] MediaShare player did not report playback start within 20 seconds.');
+            finish();
+          }, 20000);
           alertFrameRef.current?.contentWindow?.postMessage({
             type: 'sociabuzz:share-player-play',
             ...playerMessage,
@@ -1567,10 +1607,9 @@ export default function SociabuzzPage() {
         if (payload.type !== 'sociabuzz') return;
         const data = payload.data as Partial<AlertData>;
         const mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : '';
-        const shareUrlCandidate = typeof data.shareUrl === 'string' && data.shareUrl.trim()
-          ? data.shareUrl
-          : mediaUrl;
-        const shareUrl = normalizeSupportedShareUrl(shareUrlCandidate) ??
+        const shareUrl = normalizeSupportedShareUrl(typeof data.shareUrl === 'string' ? data.shareUrl : '') ??
+          normalizeSupportedShareUrl(mediaUrl) ??
+          normalizeSupportedShareUrl(typeof data.soundUrl === 'string' ? data.soundUrl : '') ??
           findSupportedShareUrl(data.raw) ??
           undefined;
         const incomingAlert: AlertData = {
@@ -1580,7 +1619,9 @@ export default function SociabuzzPage() {
           mediaUrl: shareUrl && normalizeSupportedShareUrl(mediaUrl) === shareUrl ? '' : mediaUrl,
           shareUrl,
           isNsfw: data.isNsfw === true,
-          soundUrl: typeof data.soundUrl === 'string' ? data.soundUrl : undefined,
+          soundUrl: typeof data.soundUrl === 'string' && normalizeSupportedShareUrl(data.soundUrl) !== shareUrl
+            ? data.soundUrl
+            : undefined,
           fromText: typeof data.fromText === 'string' ? data.fromText : 'mengirim',
           raw: data.raw,
         };
@@ -1728,7 +1769,7 @@ export default function SociabuzzPage() {
     }
   }, [config, webhookToken]);
 
-  const uploadCustomSound = async (file?: File) => {
+  const uploadCustomSound = async (file?: File, target: 'alert' | 'mediaShare' = 'alert') => {
     if (!file) return;
     if (!(file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(file.name))) {
       setError('File harus berupa audio (MP3, WAV, OGG, M4A, AAC, atau WebM).');
@@ -1749,13 +1790,16 @@ export default function SociabuzzPage() {
       if (!response.ok || typeof result.url !== 'string') {
         throw new Error(result.error || 'Gagal mengunggah file suara.');
       }
-      setConfig(current => ({ ...current, customSoundUrl: result.url }));
+      setConfig(current => target === 'mediaShare'
+        ? { ...current, mediaShareSoundUrl: result.url }
+        : { ...current, customSoundUrl: result.url });
     } catch (uploadError) {
       console.error('[SociaBuzz] Custom sound upload failed:', uploadError);
       setError(uploadError instanceof Error ? uploadError.message : 'Gagal mengunggah file suara.');
     } finally {
       setUploadingCustomSound(false);
-      if (customSoundInputRef.current) customSoundInputRef.current.value = '';
+      const input = target === 'mediaShare' ? mediaShareSoundInputRef.current : customSoundInputRef.current;
+      if (input) input.value = '';
     }
   };
 
@@ -2090,6 +2134,48 @@ export default function SociabuzzPage() {
                   <p role="alert" className="mt-2 text-xs text-amber-300">Pilih file suara terlebih dahulu sebelum menyimpan.</p>
                 )}
                 <p className="mt-2 text-[11px] text-slate-500">Format audio umum, maksimal 15 MB. Suara custom hanya diputar ketika toggle aktif.</p>
+              </section>
+
+              <section className="rounded-xl border border-violet-400/20 bg-violet-950/10 p-4">
+                <h2 className="text-sm font-semibold">Suara khusus setelah MediaShare</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-400">
+                  Opsional dan terpisah dari alert biasa. Jika diisi, suara ini diputar setelah video MediaShare selesai; jika kosong, pengaturan suara alert biasa tetap digunakan. Tidak digunakan saat JavaScript custom mengelola suara dengan token <code>{'{{sound}}'}</code>.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    aria-label="URL suara khusus MediaShare"
+                    value={config.mediaShareSoundUrl}
+                    onChange={event => setConfig(current => ({ ...current, mediaShareSoundUrl: event.target.value }))}
+                    placeholder="URL HTTPS atau unggahan file audio"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-400"
+                  />
+                  <input
+                    ref={mediaShareSoundInputRef}
+                    type="file"
+                    accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+                    className="hidden"
+                    onChange={event => void uploadCustomSound(event.target.files?.[0], 'mediaShare')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => mediaShareSoundInputRef.current?.click()}
+                    disabled={uploadingCustomSound}
+                    className="flex items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-60"
+                  >
+                    {uploadingCustomSound ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {uploadingCustomSound ? 'Mengunggah...' : 'Pilih file'}
+                  </button>
+                  {config.mediaShareSoundUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setConfig(current => ({ ...current, mediaShareSoundUrl: '' }))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
               </section>
 
               <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">

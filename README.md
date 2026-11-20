@@ -49,6 +49,13 @@ It is shown in the media slot only when an alert has no shared/media URL.
 Configure the default and MediaShare slot dimensions independently in the
 admin panel; those controls override CSS width and height for `.custom-media`.
 When a share URL arrives, the player replaces the default media in that slot.
+The player treats supported YouTube, TikTok, Instagram, and direct video URLs
+found in `shareUrl`, `mediaUrl`, or `soundUrl` as MediaShare URLs. YouTube,
+TikTok, and direct-video players start muted to satisfy browser autoplay rules,
+then unmute after playback starts.
+Playback completes before the donation sound and TTS. An optional MediaShare
+sound can be configured independently in the admin panel; leaving it blank
+uses the regular alert sound.
 The default template places the slot above `.cyber-card` inside `.cyber-alert`.
 MediaShare alerts remain visible for the donation-funded playback time, then
 close the player. Direct video, YouTube, and TikTok playback do not loop; when
