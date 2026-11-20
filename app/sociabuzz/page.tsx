@@ -36,6 +36,7 @@ type ResponsiveVoiceOption = {
 };
 
 type AlertData = {
+  frameNonce?: string;
   amount: string;
   supporter: string;
   message: string;
@@ -458,12 +459,14 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
   let positionSyncObserver = null;
   let positionSyncTimeout = 0;
   let positionSyncFrame = 0;
+  let hasReceivedPlayerCommand = false;
 
   const stopPositionSync = () => {
     positionSyncGeneration += 1;
     positionSyncObserver?.disconnect();
     positionSyncObserver = null;
     window.clearTimeout(positionSyncTimeout);
+    positionSyncTimeout = 0;
     window.cancelAnimationFrame(positionSyncFrame);
   };
 
@@ -576,23 +579,41 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     }
     stopPositionSync();
     const syncGeneration = positionSyncGeneration;
+    let hasMeasuredLayout = false;
+    let hasPublishedAction = false;
     applyMediaSlotSize(slot, true);
     const publishPosition = () => {
       if (syncGeneration !== positionSyncGeneration || !slot.isConnected) return;
       const rect = slot.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || window.innerWidth <= 0 || window.innerHeight <= 0) {
+        if (!hasMeasuredLayout && !positionSyncTimeout) {
+          positionSyncTimeout = window.setTimeout(() => {
+            positionSyncTimeout = 0;
+            publishPosition();
+          }, 50);
+        }
+        return;
+      }
+      if (!hasMeasuredLayout) {
+        hasMeasuredLayout = true;
+        window.clearTimeout(positionSyncTimeout);
+        positionSyncTimeout = window.setTimeout(stopPositionSync, 2000);
+      }
       window.parent.postMessage({
-        type: action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
+        type: hasPublishedAction
+          ? 'sociabuzz:share-player-position'
+          : action === 'play' ? 'sociabuzz:share-player-play' : 'sociabuzz:share-player-prepare',
         shareUrl,
         startSeconds,
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
         viewport: { width: window.innerWidth, height: window.innerHeight },
       }, '*');
+      hasPublishedAction = true;
     };
     publishPosition();
     if (typeof ResizeObserver !== 'undefined') {
       positionSyncObserver = new ResizeObserver(publishPosition);
       positionSyncObserver.observe(slot);
-      positionSyncTimeout = window.setTimeout(stopPositionSync, 2000);
     }
     let frameCount = 0;
     const followLayoutAnimation = () => {
@@ -624,6 +645,7 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
     if ((event.data?.type === 'sociabuzz:share-player-prepare' ||
          event.data?.type === 'sociabuzz:share-player-play') &&
         typeof event.data.shareUrl === 'string') {
+      hasReceivedPlayerCommand = true;
       const data = window.sociabuzz || {};
       const options = data.overlayOptions || {};
       if (options.mediashareActive && !(data.isNsfw === true && !options.mediashareNSFW)) {
@@ -639,12 +661,22 @@ const SHARE_MEDIA_BRIDGE = String.raw`(() => {
       getMediaSlot()?.replaceChildren();
     }
   });
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => requestPlayer('prepare'), { once: true });
-  } else {
-    requestPlayer('prepare');
-  }
+  const announceReady = (attempt = 0) => {
+    const slot = getMediaSlot();
+    const rect = slot?.getBoundingClientRect();
+    const hasLayout = window.innerWidth > 0 && window.innerHeight > 0 &&
+      (!slot || (rect && rect.width > 0 && rect.height > 0));
+    if (!hasLayout && attempt < 100) {
+      window.setTimeout(() => announceReady(attempt + 1), 50);
+      return;
+    }
+    if (!hasReceivedPlayerCommand) requestPlayer('prepare');
+    window.parent.postMessage({
+      type: 'sociabuzz:alert-ready',
+      frameNonce: window.sociabuzz?.frameNonce,
+    }, '*');
+  };
+  announceReady();
 })();`;
 
 const DEFAULT_OVERLAY_OPTIONS: SociaBuzzOverlayOptions = {
@@ -817,6 +849,7 @@ function createDocument(
     soundUrl: alert.soundUrl ?? null,
     fromText: alert.fromText ?? 'mengirim',
     sound: soundUrl,
+    frameNonce: alert.frameNonce ?? '',
     defaultMediaUrl,
     customMediaWidth,
     customMediaHeight,
@@ -959,8 +992,11 @@ export default function SociabuzzPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const alertFrameRef = useRef<HTMLIFrameElement>(null);
+  const alertFrameReadyRef = useRef<(() => void) | null>(null);
+  const alertFrameNonceRef = useRef<string | null>(null);
   const sharePlaybackStartedRef = useRef<(() => void) | null>(null);
   const sharePlaybackEndedRef = useRef<(() => void) | null>(null);
+  const sharePlaybackReadyRef = useRef<(() => void) | null>(null);
   const pendingSociaBuzzSharesRef = useRef<SociaBuzzShareCandidate[]>([]);
   const shareMediaWaiterRef = useRef<((candidate: SociaBuzzShareCandidate) => boolean) | null>(null);
   const customSoundInputRef = useRef<HTMLInputElement>(null);
@@ -1072,10 +1108,16 @@ export default function SociabuzzPage() {
   useEffect(() => {
     const handleSharePlayerEvent = (event: MessageEvent) => {
       if (event.source !== alertFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
+      if (event.data.type === 'sociabuzz:alert-ready') {
+        if (event.data.frameNonce === alertFrameNonceRef.current) alertFrameReadyRef.current?.();
+        return;
+      }
       if (event.data.type === 'sociabuzz:share-player-started') notifyShareMediaStarted();
       if (event.data.type === 'sociabuzz:share-player-unavailable') notifyShareMediaEnded();
       const isPrepare = event.data.type === 'sociabuzz:share-player-prepare';
-      if ((!isPrepare && event.data.type !== 'sociabuzz:share-player-play') ||
+      const isPlay = event.data.type === 'sociabuzz:share-player-play';
+      const isPosition = event.data.type === 'sociabuzz:share-player-position';
+      if ((!isPrepare && !isPlay && !isPosition) ||
           typeof event.data.shareUrl !== 'string') return;
       const overlayOptions = readSociaBuzzOverlayOptions();
       if (!overlayOptions.mediashareActive || (alert?.isNsfw === true && !overlayOptions.mediashareNSFW)) return;
@@ -1083,14 +1125,15 @@ export default function SociabuzzPage() {
       const embedUrl = getSharePlayerEmbedUrl(event.data.shareUrl, startSeconds);
       const rect = event.data.rect;
       const viewport = event.data.viewport;
-      if (!embedUrl || !rect || !['left', 'top', 'width', 'height'].every(key =>
-        typeof rect[key] === 'number' && Number.isFinite(rect[key])
-      ) || rect.width <= 0 || rect.height <= 0 ||
-          !viewport || typeof viewport.width !== 'number' || !Number.isFinite(viewport.width) || viewport.width <= 0 ||
-          typeof viewport.height !== 'number' || !Number.isFinite(viewport.height) || viewport.height <= 0) {
+      if (!embedUrl) {
         notifyShareMediaEnded();
         return;
       }
+      if (!rect || !['left', 'top', 'width', 'height'].every(key =>
+        typeof rect[key] === 'number' && Number.isFinite(rect[key])
+      ) || rect.width <= 0 || rect.height <= 0 ||
+          !viewport || typeof viewport.width !== 'number' || !Number.isFinite(viewport.width) || viewport.width <= 0 ||
+          typeof viewport.height !== 'number' || !Number.isFinite(viewport.height) || viewport.height <= 0) return;
       const alertFrame = alertFrameRef.current;
       if (!alertFrame) return;
       const frameRect = alertFrame.getBoundingClientRect();
@@ -1100,6 +1143,12 @@ export default function SociabuzzPage() {
       const slotTop = frameRect.top + rect.top * scaleY;
       const slotWidth = rect.width * scaleX;
       const slotHeight = rect.height * scaleY;
+      if (isPosition) {
+        setSharePlayerOverlay(current => current
+          ? { ...current, left: slotLeft, top: slotTop, width: slotWidth, height: slotHeight }
+          : current);
+        return;
+      }
       setSharePlayerOverlay({
         url: event.data.shareUrl,
         startSeconds,
@@ -1107,8 +1156,9 @@ export default function SociabuzzPage() {
         top: slotTop,
         width: slotWidth,
         height: slotHeight,
-        playing: !isPrepare,
+        playing: isPlay,
       });
+      if (isPlay) sharePlaybackReadyRef.current?.();
     };
     window.addEventListener('message', handleSharePlayerEvent);
     return () => window.removeEventListener('message', handleSharePlayerEvent);
@@ -1379,11 +1429,25 @@ export default function SociabuzzPage() {
       : null);
     let soundFailed = false;
 
-    setAlert(nextAlert);
+    const frameNonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    alertFrameNonceRef.current = frameNonce;
+    const alertFrameReady = new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        if (alertFrameReadyRef.current === markReady) alertFrameReadyRef.current = null;
+        reject(new Error('Alert iframe tidak siap untuk menerima perintah playback.'));
+      }, 10000);
+      const markReady = () => {
+        window.clearTimeout(timeout);
+        alertFrameReadyRef.current = null;
+        resolve();
+      };
+      alertFrameReadyRef.current = markReady;
+    });
+    setAlert({ ...nextAlert, frameNonce });
     setVisible(true);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
     try {
+      await alertFrameReady;
       const minimumVisibleTime = new Promise<void>(resolve => {
         alertTimerRef.current = window.setTimeout(() => {
           alertTimerRef.current = null;
@@ -1488,17 +1552,28 @@ export default function SociabuzzPage() {
           ...playerMessage,
         }, '*');
         return new Promise<void>(resolve => {
-          const timers: { startup?: number; duration?: number } = {};
+          const timers: { geometry?: number; startup?: number; duration?: number } = {};
           let settled = false;
           const finish = () => {
             if (settled) return;
             settled = true;
+            if (timers.geometry !== undefined) window.clearTimeout(timers.geometry);
             if (timers.duration !== undefined) window.clearTimeout(timers.duration);
             if (timers.startup !== undefined) window.clearTimeout(timers.startup);
             if (sharePlaybackStartedRef.current === beginPlaybackWindow) sharePlaybackStartedRef.current = null;
             if (sharePlaybackEndedRef.current === finish) sharePlaybackEndedRef.current = null;
+            if (sharePlaybackReadyRef.current === startPlayerStartupTimeout) sharePlaybackReadyRef.current = null;
             setSharePlayerOverlay(null);
             resolve();
+          };
+          const startPlayerStartupTimeout = () => {
+            if (settled || timers.startup !== undefined) return;
+            if (timers.geometry !== undefined) window.clearTimeout(timers.geometry);
+            timers.geometry = undefined;
+            timers.startup = window.setTimeout(() => {
+              console.warn('[SociaBuzz] MediaShare player did not report playback start within 20 seconds.');
+              finish();
+            }, 20000);
           };
           const beginPlaybackWindow = () => {
             if (settled || timers.duration !== undefined) return;
@@ -1507,10 +1582,11 @@ export default function SociabuzzPage() {
           };
           sharePlaybackStartedRef.current = beginPlaybackWindow;
           sharePlaybackEndedRef.current = finish;
-          timers.startup = window.setTimeout(() => {
-            console.warn('[SociaBuzz] MediaShare player did not report playback start within 20 seconds.');
+          sharePlaybackReadyRef.current = startPlayerStartupTimeout;
+          timers.geometry = window.setTimeout(() => {
+            console.warn('[SociaBuzz] MediaShare slot did not become measurable within 30 seconds.');
             finish();
-          }, 20000);
+          }, 30000);
           alertFrameRef.current?.contentWindow?.postMessage({
             type: 'sociabuzz:share-player-play',
             ...playerMessage,
@@ -1894,6 +1970,7 @@ export default function SociabuzzPage() {
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           referrerPolicy="strict-origin-when-cross-origin"
           srcDoc={previewHtml}
+          onLoad={() => alertFrameReadyRef.current?.()}
           className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       )}
